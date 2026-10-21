@@ -6,6 +6,7 @@ There's no app and no dashboard. The website is a single field: you enter your n
 
 - Strategy and moat: [`docs/moat.md`](docs/moat.md)
 - Requirements, using Instinct's terms as the baseline: [`docs/requirements.md`](docs/requirements.md)
+- **Scope of work and step-by-step plan: [`docs/SCOPE_OF_WORK.md`](docs/SCOPE_OF_WORK.md)**
 - Draft legal pages: `/terms`, `/privacy` and `/sms-terms`, served from `public/`
 
 ## What owners text it
