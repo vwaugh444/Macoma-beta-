@@ -37,6 +37,36 @@ Under the hood the agent:
  other agents ──A2A (+x402 payment)──▶ /a2a ──▶ agent loop (research-only tools)
 ```
 
+## Before you start: get an Anthropic API key
+
+Macoma calls Claude through the Anthropic API, so it needs its own API key.
+
+- **A Claude subscription doesn't include API access.** Plans like Pro or Max on claude.ai are billed separately from the API.
+- **A connected assistant doesn't count either.** Having another assistant such as Muse connected to your Claude account gives Macoma nothing to use.
+
+To get a key:
+
+1. Sign in at [console.anthropic.com](https://console.anthropic.com).
+2. Add a payment method under **Billing**. The API is billed per use.
+3. Go to **API Keys**, click **Create Key**, and copy it. It starts with `sk-ant-`.
+4. Put it in `.env` as `ANTHROPIC_API_KEY=sk-ant-...`. On a hosted server, add it to the host's environment settings instead.
+
+Never paste the key into chat, GitHub, or code files. `.env` is already in `.gitignore`.
+
+## Working on Macoma with a coding agent
+
+You don't need a terminal to keep building Macoma. Claude Code on the web or in the Claude app can change this repo and push the changes for you. To work on your own computer instead, install Claude Code with `npm install -g @anthropic-ai/claude-code`, then run `claude` in this folder. To drive that computer session from your phone, run `/remote-control`.
+
+## LangGraph / LangChain
+
+You don't need them. `src/agent.ts` already runs the agent loop: it calls Claude, runs the tools, and repeats until the task is done.
+
+LangGraph would only be useful for long multi-step processes that pause and pick up again over days, like "wait for the customer's reply, then send the invoice." In that case, LangGraph would replace the loop in `src/agent.ts` and reuse the functions in `src/business.ts` as its tools.
+
+## Connecting other assistants (Muse, Claude, etc.)
+
+Other AI agents can already reach Macoma over A2A (see below). Assistants that only support MCP servers, which Meta's Muse reportedly does, would need an MCP endpoint. That endpoint isn't built yet. It's planned and would expose Macoma's tools, like set a reminder or send an invoice.
+
 ## Run it locally (no Twilio needed)
 
 ```bash
