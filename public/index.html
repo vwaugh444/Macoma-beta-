@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Macoma</title>
+  <meta name="description" content="An agent you text. No app.">
+  <style>
+    :root { --bg: #f6f4ef; --fg: #141414; --muted: #75716a; --line: #d9d5cc; --accent: #141414; --accent-fg: #f6f4ef; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0e0e0e; --fg: #eeebe4; --muted: #8b877f; --line: #2a2926; --accent: #eeebe4; --accent-fg: #0e0e0e; }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg); color: var(--fg);
+      font: 17px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      display: grid; place-items: center; padding: 24px 16px;
+    }
+    main { width: 100%; max-width: 380px; }
+    h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 6px; }
+    p.lede { color: var(--muted); margin: 0 0 28px; }
+    form { display: flex; gap: 8px; }
+    input {
+      flex: 1; min-width: 0; font: inherit; color: inherit; background: transparent;
+      border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    }
+    input:focus { outline: none; border-color: var(--fg); }
+    button, a.btn {
+      font: inherit; font-weight: 500; border: 0; border-radius: 10px; padding: 12px 16px;
+      background: var(--accent); color: var(--accent-fg); cursor: pointer; text-decoration: none; white-space: nowrap;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    .fine { color: var(--muted); font-size: 13px; margin-top: 12px; }
+    .err { color: #c2410c; font-size: 14px; min-height: 20px; margin-top: 8px; }
+    .done { display: none; }
+    .share { display: flex; gap: 8px; margin: 16px 0 8px; }
+    .share input { font-size: 15px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ghost { background: transparent !important; color: var(--fg) !important; border: 1px solid var(--line) !important; }
+  </style>
+</head>
+<body>
+<main>
+  <section id="join">
+    <h1>Macoma</h1>
+    <p class="lede">An agent you text. No app, no account. Drop your number and it'll text you first.</p>
+    <form id="form">
+      <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 555-0100" required aria-label="Phone number">
+      <button id="go" type="submit">Text me</button>
+    </form>
+    <div class="err" id="err" role="alert"></div>
+    <p class="fine">By continuing you agree to get texts from Macoma. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help.</p>
+  </section>
+
+  <section id="done" class="done">
+    <h1>Check your texts.</h1>
+    <p class="lede">Your agent just said hi. Reply to it like you would a friend.</p>
+    <p style="margin:0">Your invite link</p>
+    <div class="share">
+      <input id="link" readonly aria-label="Your invite link">
+      <button id="copy" type="button">Copy</button>
+    </div>
+    <div class="row">
+      <button id="native" type="button" class="ghost" hidden>Share…</button>
+      <a id="sms" class="btn ghost" hidden>Open messages</a>
+    </div>
+    <p class="fine" id="count"></p>
+  </section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const ref = new URLSearchParams(location.search).get("ref");
+
+  fetch("/api/config").then(r => r.json()).then(cfg => {
+    if (ref) $("join").querySelector(".lede").textContent = "A friend sent you an invite. Drop your number and your agent will text you first.";
+    else if (cfg.inviteOnly) $("join").querySelector(".lede").textContent = "Invite-only for now. You'll need a link from a friend.";
+  }).catch(() => {});
+
+  $("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("err").textContent = "";
+    $("go").disabled = true;
+    try {
+      const res = await fetch("/api/join", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone: $("phone").value, ref }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Something went wrong.");
+      $("link").value = data.shareUrl;
+      $("count").textContent = data.referrals ? `${data.referrals} friend${data.referrals === 1 ? "" : "s"} joined with your link.` : "";
+      if (data.agentNumber) { $("sms").href = "sms:" + data.agentNumber; $("sms").hidden = false; }
+      if (navigator.share) $("native").hidden = false;
+      $("join").style.display = "none";
+      $("done").style.display = "block";
+    } catch (err) {
+      $("err").textContent = err.message;
+    } finally {
+      $("go").disabled = false;
+    }
+  });
+
+  $("copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("link").value); } catch { $("link").select(); document.execCommand("copy"); }
+    $("copy").textContent = "Copied";
+    setTimeout(() => ($("copy").textContent = "Copy"), 1500);
+  });
+
+  $("native").addEventListener("click", () => {
+    navigator.share({ title: "Macoma", text: "Text this AI agent. Here's my invite:", url: $("link").value }).catch(() => {});
+  });
+</script>
+</body>
+</html>
