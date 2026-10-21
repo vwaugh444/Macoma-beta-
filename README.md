@@ -1,10 +1,29 @@
 # Macoma
 
-A personal AI agent you reach by text. There's no app and no dashboard. The website is a single field: you enter your phone number, the agent texts you first, and you get an invite link to share.
+**The office manager you text.** Macoma is an AI assistant that lives in your messages. Anyone can use it. It's built especially for people who run a business from their phone and need help remembering to reorder supplies, send and chase invoices, follow up with leads and customers, and text a client when they're running late.
+
+There's no app and no dashboard. The website is a single field: you enter your number, verify it with a code, the agent texts you, and you get an invite link to share.
+
+- Strategy and moat: [`docs/moat.md`](docs/moat.md)
+- Requirements, using Instinct's terms as the baseline: [`docs/requirements.md`](docs/requirements.md)
+- Draft legal pages: `/terms`, `/privacy` and `/sms-terms`, served from `public/`
+
+## What owners text it
+
+| Text | What happens |
+|---|---|
+| "Remind me to order cups every other Monday at 9" | A repeating reorder reminder |
+| "Tell my 2pm (Dana) I'm running 15 late" | A drafted text to Dana. **Reply YES** to send it, signed with your business name |
+| "Invoice Dana $450 for the deck stain, due Friday" | A draft invoice. Reply YES and Dana gets a Stripe or payment link. You're nudged if it's late and told when it's paid |
+| "If the Patel lead doesn't reply by Thursday, remind me" | A follow-up that's skipped automatically if Patel texts back |
+| (8am every day) | Morning brief: today's reminders, overdue invoices, leads that went quiet |
+| LOG / HELP / STOP / START / DELETE MY DATA | Action log, help, opt out, opt back in, erase your account |
+
+When a customer replies to a text Macoma sent, the reply is passed to the owner. If a customer texts STOP, Macoma won't text them again for any owner.
 
 Under the hood the agent:
 
-- **Runs on Claude** with web search, memory and a tool-use loop (`src/agent.ts`).
+- **Runs on Claude** with web search, memory, owner tools (`src/business.ts`) and a scheduler (`src/scheduler.ts`).
 - **Speaks A2A** (Agent2Agent protocol). It publishes an Agent Card at `/.well-known/agent-card.json` and answers JSON-RPC `message/send` at `/a2a`. It can also call other A2A agents (`ask_agent` tool).
 - **Uses x402 in both directions.** It pays for HTTP 402 APIs and paid agents from its own USDC wallet, within a per-call limit and a daily budget for each user. It can also charge other agents per A2A call.
 
@@ -25,7 +44,7 @@ cp .env.example .env        # set ANTHROPIC_API_KEY at minimum
 npm run dev
 ```
 
-With Twilio left blank, texts the agent sends are printed to the console. To simulate an incoming text:
+With Twilio left blank, texts the agent sends are printed to the console, including the 6-digit sign-in code. To simulate an incoming text:
 
 ```bash
 curl -X POST localhost:3000/sms -d 'From=+14155550100' -d 'Body=find me a ramen spot near union square'
@@ -38,6 +57,10 @@ curl -X POST localhost:3000/sms -d 'From=+14155550100' -d 'Body=find me a ramen 
 3. **Webhook.** In the Twilio number's settings, set "A message comes in" to `POST {PUBLIC_URL}/sms`.
 4. **Fill in `.env`** with the Twilio SID, auth token and number.
 5. Open the site, enter your number, and reply to the text.
+
+### Stripe invoices (optional)
+
+Set `STRIPE_SECRET_KEY` and add a webhook for `invoice.paid` pointing to `{PUBLIC_URL}/stripe/webhook`, with its signing secret in `STRIPE_WEBHOOK_SECRET`. Without Stripe, invoices link to the owner's own payment link (Square, Venmo, PayPal...). The owner can set it by texting it to Macoma.
 
 ### x402 setup
 
@@ -63,5 +86,7 @@ All configuration is in `.env.example`. `INVITE_ONLY=true` makes a friend's link
 ## Notes
 
 - Storage is a JSON file in `data/`. Use a real database before you have real users.
-- The join endpoint allows 5 attempts per IP per hour. This stops people from using the form to send texts to strangers' numbers.
+- Signing up is limited to 10 attempts per IP per hour and 3 codes per number per hour, so the form can't be used to spam strangers.
+- Consent records (time, method, terms version) are kept even after an account is deleted.
+- Before launch: register with carriers (A2P 10DLC or toll-free verification), have a lawyer review the legal pages, and add billing. See `docs/requirements.md`.
 - Agents calling over A2A get research tools only. They can't use the wallet or read user memory.
