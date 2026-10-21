@@ -1,0 +1,33 @@
+{
+  "name": "macoma",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal AI agent you reach by text. Speaks A2A and pays/charges with x402.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.137.0",
+    "@x402/core": "^2.28.0",
+    "@x402/evm": "^2.28.0",
+    "@x402/express": "^2.28.0",
+    "@x402/fetch": "^2.28.0",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "stripe": "^23.0.0",
+    "twilio": "^6.2.0",
+    "viem": "^2.57.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

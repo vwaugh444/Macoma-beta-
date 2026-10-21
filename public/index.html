@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Macoma</title>
+  <meta name="description" content="The office manager you text. Reminders, reorders, invoices and follow-ups for people who run a business from their phone.">
+  <style>
+    :root { --bg: #f6f4ef; --fg: #141414; --muted: #75716a; --line: #d9d5cc; --accent: #141414; --accent-fg: #f6f4ef; --err: #b43c0c; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0e0e0e; --fg: #eeebe4; --muted: #8b877f; --line: #2a2926; --accent: #eeebe4; --accent-fg: #0e0e0e; --err: #f08a5d; }
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      background: var(--bg); color: var(--fg);
+      font: 17px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      display: grid; place-items: center; padding: 32px 16px;
+    }
+    main { width: 100%; max-width: 400px; }
+    h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 6px; }
+    p.lede { color: var(--muted); margin: 0 0 20px; }
+    ul.eg { list-style: none; padding: 0; margin: 0 0 28px; color: var(--muted); font-size: 15px; }
+    ul.eg li { padding: 6px 0; border-top: 1px solid var(--line); }
+    ul.eg li:last-child { border-bottom: 1px solid var(--line); }
+    form { display: grid; gap: 10px; }
+    .row { display: flex; gap: 8px; }
+    input[type=tel], input[type=text], input.code {
+      flex: 1; min-width: 0; font: inherit; color: inherit; background: transparent;
+      border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    }
+    input:focus { outline: none; border-color: var(--fg); }
+    input.code { letter-spacing: .3em; font-variant-numeric: tabular-nums; }
+    label.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--muted); }
+    label.check input { margin-top: 3px; accent-color: var(--accent); }
+    a { color: inherit; }
+    button, a.btn {
+      font: inherit; font-weight: 500; border: 0; border-radius: 10px; padding: 12px 16px;
+      background: var(--accent); color: var(--accent-fg); cursor: pointer; text-decoration: none; white-space: nowrap;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    .ghost { background: transparent !important; color: var(--fg) !important; border: 1px solid var(--line) !important; }
+    .fine { color: var(--muted); font-size: 12.5px; margin: 4px 0 0; }
+    .err { color: var(--err); font-size: 14px; min-height: 20px; }
+    .step { display: none; }
+    .step.on { display: block; }
+    .link { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; font-size: 14px; }
+    footer { margin-top: 32px; font-size: 13px; color: var(--muted); display: flex; gap: 16px; }
+  </style>
+</head>
+<body>
+<main>
+  <section id="s1" class="step on">
+    <h1>The office manager you text.</h1>
+    <p class="lede" id="lede">Macoma is an AI assistant that lives in your messages. It's for everyone, and it's especially good if you run a business from your phone.</p>
+    <ul class="eg">
+      <li>"Remind me to reorder cups every other Monday."</li>
+      <li>"Tell my 2pm I'm running 15 late."</li>
+      <li>"Invoice Dana $450 for the deck stain, due Friday."</li>
+      <li>"If the Patel lead doesn't answer by Thursday, nudge me."</li>
+    </ul>
+    <form id="f1">
+      <div class="row">
+        <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 555-0100" required aria-label="Mobile number">
+        <button id="b1" type="submit">Text me</button>
+      </div>
+      <label class="check"><input id="age" type="checkbox" required> I'm 18 or older.</label>
+      <label class="check"><input id="agree" type="checkbox" required>
+        <span>I agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and to get texts from Macoma at this number. These include sign-in codes, a welcome text, replies to my messages, and the reminders I set. Some may be sent automatically. How often depends on how I use it. Msg &amp; data rates may apply. Reply STOP to cancel or HELP for help. See the <a href="/sms-terms" target="_blank">SMS terms</a>.</span>
+      </label>
+      <div class="err" id="e1" role="alert"></div>
+    </form>
+  </section>
+
+  <section id="s2" class="step">
+    <h1>Enter your code.</h1>
+    <p class="lede">We texted a 6-digit code to <span id="sentTo"></span>.</p>
+    <form id="f2">
+      <div class="row">
+        <input id="code" class="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" required aria-label="6-digit code">
+        <button id="b2" type="submit">Verify</button>
+      </div>
+      <div class="err" id="e2" role="alert"></div>
+      <div><button type="button" class="link" id="back">Use a different number</button></div>
+    </form>
+  </section>
+
+  <section id="s3" class="step">
+    <h1 id="doneTitle">Check your texts.</h1>
+    <p class="lede" id="doneLede">Macoma just said hi. Reply like you'd text a sharp assistant.</p>
+    <p style="margin:0 0 6px">Your invite link</p>
+    <div class="row">
+      <input id="link" type="text" readonly aria-label="Your invite link">
+      <button id="copy" type="button">Copy</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="native" type="button" class="ghost" hidden>Share…</button>
+      <a id="sms" class="btn ghost" hidden>Open messages</a>
+    </div>
+    <p class="fine" id="count"></p>
+  </section>
+
+  <footer><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/sms-terms">SMS terms</a></footer>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const ref = new URLSearchParams(location.search).get("ref");
+  const show = (n) => ["s1", "s2", "s3"].forEach((s, i) => $(s).classList.toggle("on", i === n));
+  async function post(url, body) {
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Something went wrong.");
+    return data;
+  }
+
+  fetch("/api/config").then(r => r.json()).then(cfg => {
+    if (ref) $("lede").textContent = "A friend invited you. Macoma is an AI assistant that lives in your messages: reminders, reorders, invoices, follow-ups.";
+    else if (cfg.inviteOnly) $("lede").textContent = "Invite-only for now. You'll need a link from a friend.";
+  }).catch(() => {});
+
+  $("f1").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("e1").textContent = "";
+    $("b1").disabled = true;
+    try {
+      await post("/api/join", { phone: $("phone").value, ref, ageConfirmed: $("age").checked, agreed: $("agree").checked });
+      $("sentTo").textContent = $("phone").value;
+      show(1);
+      $("code").focus();
+    } catch (err) { $("e1").textContent = err.message; }
+    finally { $("b1").disabled = false; }
+  });
+
+  $("f2").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("e2").textContent = "";
+    $("b2").disabled = true;
+    try {
+      const data = await post("/api/verify", { phone: $("phone").value, code: $("code").value });
+      $("link").value = data.shareUrl;
+      if (!data.isNew) { $("doneTitle").textContent = "Welcome back."; $("doneLede").textContent = "Your assistant is a text away."; }
+      $("count").textContent = data.referrals ? `${data.referrals} friend${data.referrals === 1 ? "" : "s"} joined with your link.` : "";
+      if (data.agentNumber) { $("sms").href = "sms:" + data.agentNumber; $("sms").hidden = false; }
+      if (navigator.share) $("native").hidden = false;
+      show(2);
+    } catch (err) { $("e2").textContent = err.message; }
+    finally { $("b2").disabled = false; }
+  });
+
+  $("back").addEventListener("click", () => { $("code").value = ""; show(0); });
+
+  $("copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("link").value); } catch { $("link").select(); document.execCommand("copy"); }
+    $("copy").textContent = "Copied";
+    setTimeout(() => ($("copy").textContent = "Copy"), 1500);
+  });
+
+  $("native").addEventListener("click", () => {
+    navigator.share({ title: "Macoma", text: "The office manager you text. Here's my invite:", url: $("link").value }).catch(() => {});
+  });
+</script>
+</body>
+</html>

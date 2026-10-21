@@ -1,2 +1,123 @@
-# Macoma-beta-
-personal assistance agent 
+# Macoma
+
+**The office manager you text.** Macoma is an AI assistant that lives in your messages. Anyone can use it. It's built especially for people who run a business from their phone and need help remembering to reorder supplies, send and chase invoices, follow up with leads and customers, and text a client when they're running late.
+
+There's no app and no dashboard. The website is a single field: you enter your number, verify it with a code, the agent texts you, and you get an invite link to share.
+
+- Strategy and moat: [`docs/moat.md`](docs/moat.md)
+- Requirements, using Instinct's terms as the baseline: [`docs/requirements.md`](docs/requirements.md)
+- **Scope of work and step-by-step plan: [`docs/SCOPE_OF_WORK.md`](docs/SCOPE_OF_WORK.md)**
+- Draft legal pages: `/terms`, `/privacy` and `/sms-terms`, served from `public/`
+
+## What owners text it
+
+| Text | What happens |
+|---|---|
+| "Remind me to order cups every other Monday at 9" | A repeating reorder reminder |
+| "Tell my 2pm (Dana) I'm running 15 late" | A drafted text to Dana. **Reply YES** to send it, signed with your business name |
+| "Invoice Dana $450 for the deck stain, due Friday" | A draft invoice. Reply YES and Dana gets a Stripe or payment link. You're nudged if it's late and told when it's paid |
+| "If the Patel lead doesn't reply by Thursday, remind me" | A follow-up that's skipped automatically if Patel texts back |
+| (8am every day) | Morning brief: today's reminders, overdue invoices, leads that went quiet |
+| LOG / HELP / STOP / START / DELETE MY DATA | Action log, help, opt out, opt back in, erase your account |
+
+When a customer replies to a text Macoma sent, the reply is passed to the owner. If a customer texts STOP, Macoma won't text them again for any owner.
+
+Under the hood the agent:
+
+- **Runs on Claude** with web search, memory, owner tools (`src/business.ts`) and a scheduler (`src/scheduler.ts`).
+- **Speaks A2A** (Agent2Agent protocol). It publishes an Agent Card at `/.well-known/agent-card.json` and answers JSON-RPC `message/send` at `/a2a`. It can also call other A2A agents (`ask_agent` tool).
+- **Uses x402 in both directions.** It pays for HTTP 402 APIs and paid agents from its own USDC wallet, within a per-call limit and a daily budget for each user. It can also charge other agents per A2A call.
+
+```
+ phone ──SMS──▶ Twilio ──webhook──▶ /sms ──▶ agent loop (Claude)
+                                               ├─ web_search
+                                               ├─ pay_and_fetch ──x402──▶ paid APIs
+                                               ├─ ask_agent ─────A2A────▶ other agents
+                                               └─ remember / share_link
+ other agents ──A2A (+x402 payment)──▶ /a2a ──▶ agent loop (research-only tools)
+```
+
+## Before you start: get an Anthropic API key
+
+Macoma calls Claude through the Anthropic API, so it needs its own API key.
+
+- **A Claude subscription doesn't include API access.** Plans like Pro or Max on claude.ai are billed separately from the API.
+- **A connected assistant doesn't count either.** Having another assistant such as Muse connected to your Claude account gives Macoma nothing to use.
+
+To get a key:
+
+1. Sign in at [console.anthropic.com](https://console.anthropic.com).
+2. Add a payment method under **Billing**. The API is billed per use.
+3. Go to **API Keys**, click **Create Key**, and copy it. It starts with `sk-ant-`.
+4. Put it in `.env` as `ANTHROPIC_API_KEY=sk-ant-...`. On a hosted server, add it to the host's environment settings instead.
+
+Never paste the key into chat, GitHub, or code files. `.env` is already in `.gitignore`.
+
+## Working on Macoma with a coding agent
+
+You don't need a terminal to keep building Macoma. Claude Code on the web or in the Claude app can change this repo and push the changes for you. To work on your own computer instead, install Claude Code with `npm install -g @anthropic-ai/claude-code`, then run `claude` in this folder. To drive that computer session from your phone, run `/remote-control`.
+
+## LangGraph / LangChain
+
+You don't need them. `src/agent.ts` already runs the agent loop: it calls Claude, runs the tools, and repeats until the task is done.
+
+LangGraph would only be useful for long multi-step processes that pause and pick up again over days, like "wait for the customer's reply, then send the invoice." In that case, LangGraph would replace the loop in `src/agent.ts` and reuse the functions in `src/business.ts` as its tools.
+
+## Connecting other assistants (Muse, Claude, etc.)
+
+Other AI agents can already reach Macoma over A2A (see below). Assistants that only support MCP servers, which Meta's Muse reportedly does, would need an MCP endpoint. That endpoint isn't built yet. It's planned and would expose Macoma's tools, like set a reminder or send an invoice.
+
+## Run it locally (no Twilio needed)
+
+```bash
+npm install
+cp .env.example .env        # set ANTHROPIC_API_KEY at minimum
+npm run dev
+```
+
+With Twilio left blank, texts the agent sends are printed to the console, including the 6-digit sign-in code. To simulate an incoming text:
+
+```bash
+curl -X POST localhost:3000/sms -d 'From=+14155550100' -d 'Body=find me a ramen spot near union square'
+```
+
+## Make it real
+
+1. **Twilio number.** Buy an SMS-capable number. For US texting, register it for A2P 10DLC (or use a verified toll-free number). Without registration, carriers block messages.
+2. **Public URL.** Deploy the server (Fly, Railway, Render) or run `ngrok http 3000`. Set `PUBLIC_URL` to the exact public URL, because Twilio signature checks depend on it.
+3. **Webhook.** In the Twilio number's settings, set "A message comes in" to `POST {PUBLIC_URL}/sms`.
+4. **Fill in `.env`** with the Twilio SID, auth token and number.
+5. Open the site, enter your number, and reply to the text.
+
+### Stripe invoices (optional)
+
+Set `STRIPE_SECRET_KEY` and add a webhook for `invoice.paid` pointing to `{PUBLIC_URL}/stripe/webhook`, with its signing secret in `STRIPE_WEBHOOK_SECRET`. Without Stripe, invoices link to the owner's own payment link (Square, Venmo, PayPal...). The owner can set it by texting it to Macoma.
+
+### x402 setup
+
+- **Let the agent pay.** Generate a new testnet key, set `AGENT_WALLET_PRIVATE_KEY`, and fund the wallet with Base Sepolia USDC from a faucet. Each user has a spending limit of `MAX_SPEND_PER_CALL_USD` per call and `DAILY_BUDGET_USD` per day. Before paying, the agent reads the endpoint's price from its 402 response.
+- **Charge other agents.** Set `X402_PAY_TO` to your receiving address and `A2A_PRICE`, for example `$0.01`. Calls to `POST /a2a` then return 402 until they're paid.
+- Switch to mainnet with `X402_NETWORK=eip155:8453` and a mainnet facilitator.
+
+### Try A2A
+
+```bash
+curl localhost:3000/.well-known/agent-card.json
+curl -X POST localhost:3000/a2a -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"message/send",
+  "params":{"message":{"kind":"message","role":"user","messageId":"1","parts":[{"kind":"text","text":"Summarize today'\''s top AI news in 3 lines"}]}}}'
+```
+
+Or text your agent: "ask the agent at https://some-agent.example.com to …"
+
+## Config
+
+All configuration is in `.env.example`. `INVITE_ONLY=true` makes a friend's link a requirement for joining.
+
+## Notes
+
+- Storage is a JSON file in `data/`. Use a real database before you have real users.
+- Signing up is limited to 10 attempts per IP per hour and 3 codes per number per hour, so the form can't be used to spam strangers.
+- Consent records (time, method, terms version) are kept even after an account is deleted.
+- Before launch: register with carriers (A2P 10DLC or toll-free verification), have a lawyer review the legal pages, and add billing. See `docs/requirements.md`.
+- Agents calling over A2A get research tools only. They can't use the wallet or read user memory.
