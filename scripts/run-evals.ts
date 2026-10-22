@@ -13,6 +13,7 @@ import path from "node:path";
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "macoma-evals-"));
 process.env.QUIET_SMS = "true";
+delete process.env.DATABASE_URL; // always a throwaway embedded database, never a real one
 delete process.env.TWILIO_ACCOUNT_SID; // never send real texts from an eval
 
 const { runAgent } = await import("../src/agent.js");
@@ -65,7 +66,7 @@ async function run(s: Scenario) {
   const phone = `+1999555${String(1000 + n++).padStart(4, "0")}`;
   const user = await store.createUser(phone, null);
   user.status = "active";
-  billing.startTrial(user);
+  await billing.startTrial(user);
   const tz = s.setup.profile?.timezone && !s.night ? s.setup.profile.timezone : zoneFor(Boolean(s.night));
   Object.assign(user.settings, { timezone: tz, name: s.setup.profile?.name ?? null, business: s.setup.profile?.business ?? null, paymentLink: s.setup.profile?.paymentLink ?? null });
   for (const c of s.setup.contacts ?? []) biz.upsertContact(user, c);

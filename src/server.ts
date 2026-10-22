@@ -91,12 +91,9 @@ app.post("/api/billing/checkout", async (req, res) => {
   if (!user) return res.status(401).json({ error: "Please sign in again, or text CONNECT for a new link." });
   const plan = String(req.body?.plan ?? "") as keyof typeof billing.PLANS;
   if (!billing.PLANS[plan]) return res.status(400).json({ error: "Pick a plan." });
-  user.billing.plan = plan;
-  update(user);
-  if (!stripeEnabled) return res.json({ url: null, message: "Billing isn't switched on yet. Your free trial is running." });
   try {
     const back = req.body?.t ? `/connect.html?t=${connectToken(user)}&paid=1` : "/workspace?paid=1";
-    res.json({ url: await billing.planLink(user, plan, back) });
+    res.json(await billing.switchPlan(user, plan, back));
   } catch (err) {
     console.error("checkout", err);
     res.status(502).json({ error: "Checkout is unavailable right now. Try again in a minute." });
@@ -165,7 +162,7 @@ app.post("/api/verify", async (req, res) => {
   user.optedOut = false;
   user.verifiedAt ??= Date.now();
   update(user);
-  if (isNew) billing.startTrial(user);
+  if (isNew) await billing.startTrial(user);
   startSession(res, user);
   res.json({
     next: isNew ? "/workspace?welcome=1" : "/workspace",

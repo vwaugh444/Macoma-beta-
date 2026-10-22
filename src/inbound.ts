@@ -15,7 +15,7 @@ import {
 import { sendSms } from "./sms.js";
 import * as biz from "./business.js";
 import * as billing from "./billing.js";
-import { connectUrl, connectedSummary } from "./connectors.js";
+import { connectUrl, connectedSummary, disconnectAll } from "./connectors.js";
 import { tickUser } from "./scheduler.js";
 import type { Job, JobKind } from "./queue.js";
 import type { Stripe } from "./stripeClient.js";
@@ -35,6 +35,13 @@ const HELP_TEXT = `Macoma: an AI assistant you text. Reply PLAN for your usage, 
 const WELCOME_TEXT =
   "Hey, it's Macoma, your assistant. Text me like you'd text a sharp office manager: reminders, reorders, invoices, follow-ups, \"tell my 2pm I'm running late\". What should I call you, and what's your business (if you have one)?";
 const TERMS_PROMPT = `Hi, I'm Macoma, an AI assistant you text. To start, reply YES to confirm you're 18+ and agree to the Terms (${PUBLIC_URL}/terms) and SMS terms (${PUBLIC_URL}/sms-terms). Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out.`;
+
+// Deleting an account: stop billing, revoke connected accounts, then erase the record.
+export async function closeAccount(user: User) {
+  await billing.cancelNow(user);
+  await disconnectAll(user);
+  await deleteUser(user.phone);
+}
 
 // Texts to the owner are metered: every segment counts toward the margin rule.
 export async function textOwner(user: User, body: string) {
@@ -76,12 +83,12 @@ async function handleOwner(user: User, text: string) {
     user.status = "active";
     user.verifiedAt = Date.now();
     update(user);
-    billing.startTrial(user);
+    await billing.startTrial(user);
     await sendWelcome(user);
     return reply(`Want me to see your calendar or send invoices you get paid for by Apple Pay? Connect your accounts here (link works for 30 min): ${connectUrl(user)}`);
   }
 
-  if (user.pending && YES_WORDS.has(word)) return reply(await biz.confirmPending(user, () => deleteUser(user.phone)));
+  if (user.pending && YES_WORDS.has(word)) return reply(await biz.confirmPending(user, () => closeAccount(user)));
   if (user.pending && NO_WORDS.has(word)) {
     const what = biz.cancelPending(user);
     return reply(what ? `Cancelled: ${what}` : "Nothing to cancel.");
@@ -93,8 +100,10 @@ async function handleOwner(user: User, text: string) {
   if (word === "UPGRADE") {
     const next = user.billing.plan === "personal" ? "business" : "crew";
     const p = billing.PLANS[next];
-    return reply(`${p.name}: $${p.priceUsd}/mo, ${p.replies} replies, ${p.customerTexts} customer texts. Switch here (Apple Pay works): ${await billing.planLink(user, next, "/thanks.html?")}`);
+    const r = await billing.switchPlan(user, next, "/thanks.html?");
+    return reply(r.url ? `${p.name}: $${p.priceUsd}/mo, ${p.replies} replies, ${p.customerTexts} customer texts. Switch here (Apple Pay works): ${r.url}` : r.message);
   }
+  if (word === "START NOW") return reply(await billing.startPlanNow(user));
   if (word === "CANCEL PLAN") return reply(await billing.cancelPlan(user));
   if (word === "START PLAN" || word === "RESUME PLAN") return reply(await billing.resumePlan(user));
   if (word === "DELETE MY DATA" || word === "DELETE ACCOUNT") {

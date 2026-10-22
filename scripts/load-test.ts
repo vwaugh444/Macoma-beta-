@@ -42,7 +42,8 @@ await store.unitOfWork(async () => {
   u.status = "active";
   u.verifiedAt = u.welcomeSentAt = Date.now();
   u.settings.digestHour = null;
-  billing.startTrial(u);
+  u.billing.status = "trialing";
+  u.billing.trialEndsAt = Date.now() + 14 * 86_400_000;
   store.update(u);
 });
 await d.query(

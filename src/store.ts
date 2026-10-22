@@ -53,6 +53,8 @@ export type Invoice = {
   createdAt: number;
   sentAt: number | null;
   paidAt: number | null;
+  feeCents?: number; // Macoma's application fee on a Stripe invoice
+  feeRecorded?: boolean;
 };
 
 // Every Action the agent takes (or proposes) is recorded so the owner can review it.
@@ -493,6 +495,12 @@ export async function importLegacyStore() {
   if (rows[0].n > 0) return;
   const old = JSON.parse(fs.readFileSync(file, "utf8"));
   for (const u of Object.values<User>(old.users ?? {})) {
+    normalize(u);
+    // Accounts from before billing existed get a fresh trial instead of being locked out.
+    if (u.status === "active" && u.billing.status === "none") {
+      u.billing.status = "trialing";
+      u.billing.trialEndsAt = Date.now() + Number(process.env.TRIAL_DAYS ?? 14) * 86_400_000;
+    }
     await d.query("INSERT INTO users (phone, doc, code, referred_by, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING", [
       u.phone,
       JSON.stringify(normalize(u)),

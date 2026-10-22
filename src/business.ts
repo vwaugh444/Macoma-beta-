@@ -164,17 +164,22 @@ function inQuietHours(user: User) {
   return hour < 8 || hour >= 21;
 }
 
+// Why a text to this contact can't go out right now, or null if it can.
+async function textBlocked(user: User, c: Contact): Promise<string | null> {
+  if (!c.phone) return `${c.name} has no phone number on file.`;
+  if (await isDoNotText(c.phone)) return `${c.name} has opted out of texts.`;
+  if (inQuietHours(user)) return "It's outside 8am–9pm for texting customers. Set a reminder to send it in the morning instead.";
+  return billing.canTextCustomer(user);
+}
+
 function signature(user: User) {
   return user.settings.business ?? user.settings.name ?? "your contact";
 }
 
 export async function draftContactMessage(user: User, contactRef: string, text: string): Promise<string> {
   const c = findContact(user, contactRef);
-  if (!c.phone) throw new Error(`${c.name} has no phone number on file.`);
-  if (await isDoNotText(c.phone)) throw new Error(`${c.name} has opted out of texts. Reach them another way.`);
-  if (inQuietHours(user)) throw new Error("It's outside 8am–9pm. Set a reminder to send it in the morning instead.");
-  const limit = billing.canTextCustomer(user);
-  if (limit) throw new Error(limit);
+  const blocked = await textBlocked(user, c);
+  if (blocked) throw new Error(blocked);
   const body = `${text}\n\n– ${signature(user)} (sent via Macoma)`;
   propose(user, "message_contact", `Text ${c.name}: "${text}"`, { contactId: c.id, text: body });
   return `Drafted. Show the owner this exact message to ${c.name} and ask them to reply YES to send or NO to cancel:\n${body}`;
@@ -183,7 +188,9 @@ export async function draftContactMessage(user: User, contactRef: string, text: 
 async function deliverToContact(user: User, contactId: string, body: string): Promise<string> {
   const c = user.contacts.find((x) => x.id === contactId);
   if (!c?.phone) throw new Error("contact has no phone");
-  if (await isDoNotText(c.phone)) throw new Error(`${c.name} has opted out of texts`);
+  // Checked again at YES: the owner may confirm hours later, or after using up the allowance.
+  const blocked = await textBlocked(user, c);
+  if (blocked) throw new Error(blocked);
   // First-ever message to this number carries opt-out instructions.
   const first = !c.lastOutboundAt;
   const text = first ? `${body}\nReply STOP to opt out.` : body;
@@ -287,11 +294,16 @@ export function describeInvoices(user: User, status?: string): string {
   return list.map((i) => `${i.id} · ${invoiceText(user, i).split("\n")[0]}`).join("\n");
 }
 
-export function proposeSendInvoice(user: User, invoiceId: string): string {
+// Stripe emails the invoice when the owner has connected Stripe and the contact has an email.
+const canEmail = (user: User, c: Contact) => Boolean(c.email && stripe && user.billing.connectAccountId);
+
+export async function proposeSendInvoice(user: User, invoiceId: string): Promise<string> {
   const inv = user.invoices.find((i) => i.id === invoiceId);
   if (!inv) throw new Error(`No invoice ${invoiceId}`);
   const c = user.contacts.find((x) => x.id === inv.contactId)!;
   if (!c.phone && !c.email) throw new Error(`${c.name} has no phone or email on file.`);
+  const blocked = await textBlocked(user, c);
+  if (blocked && !canEmail(user, c)) throw new Error(blocked);
   if (!(stripe && user.billing.connectAccountId) && !user.settings.paymentLink)
     throw new Error(
       "No way to collect payment yet. Ask the owner to connect Stripe (text CONNECT for the link) so customers can pay with Apple Pay, or to send a payment link (Square, Venmo, PayPal) to save with update_profile.",
@@ -316,6 +328,7 @@ async function deliverInvoice(user: User, invoiceId: string): Promise<string> {
       opts,
     );
     const fee = billing.invoiceFeeCents(user, inv.total);
+    inv.feeCents = fee; // counted as revenue when Stripe says it's paid
     const draft = await stripe.invoices.create(
       {
         customer: customer.id,
@@ -346,7 +359,10 @@ async function deliverInvoice(user: User, invoiceId: string): Promise<string> {
     inv.payUrl = user.settings.paymentLink;
   }
 
-  if (c.phone && !(await isDoNotText(c.phone))) {
+  const blocked = await textBlocked(user, c);
+  if (blocked && !canEmail(user, c)) throw new Error(blocked);
+  let texted = false;
+  if (!blocked && c.phone) {
     const first = !c.lastOutboundAt;
     const text = `Hi ${c.name.split(" ")[0]}, here's invoice ${inv.number} from ${signature(user)} for $${inv.total.toFixed(2)}, due ${fmtDate(
       user,
@@ -355,6 +371,7 @@ async function deliverInvoice(user: User, invoiceId: string): Promise<string> {
     await sendSms(c.phone, text);
     billing.recordCustomerText(user, text);
     c.lastOutboundAt = Date.now();
+    texted = true;
   }
   inv.status = "sent";
   inv.sentAt = Date.now();
@@ -366,7 +383,8 @@ async function deliverInvoice(user: User, invoiceId: string): Promise<string> {
     contactId: c.id,
   });
   update(user);
-  return `Sent ${inv.number} to ${c.name}${c.email && stripe && acct ? " (text + email)" : ""}. I'll tell you when it's paid and nudge you if it's late.`;
+  const how = texted && canEmail(user, c) ? "by text and email" : texted ? "by text" : `by email (no text: ${blocked})`;
+  return `Sent ${inv.number} to ${c.name} ${how}. I'll tell you when it's paid and nudge you if it's late.`;
 }
 
 export function markInvoicePaid(user: User, invoiceId: string, via = "owner"): Invoice {
@@ -388,8 +406,11 @@ export async function handleConnectEvent(event: Stripe.Event, findOwner: (phone:
   // Only trust an invoice that came from the account this owner connected.
   if (!owner || !si.metadata?.invoiceId || owner.billing.connectAccountId !== event.account) return;
   const inv = markInvoicePaid(owner, si.metadata.invoiceId, "stripe");
-  const fee = (si as unknown as { application_fee_amount?: number | null }).application_fee_amount ?? 0;
-  if (fee > 0) billing.recordInvoiceFee(owner, fee / 100);
+  const fee = inv.feeCents ?? 0;
+  if (fee > 0 && !inv.feeRecorded) {
+    billing.recordInvoiceFee(owner, fee / 100);
+    inv.feeRecorded = true;
+  }
   const c = owner.contacts.find((x) => x.id === inv.contactId);
   if (!owner.optedOut) {
     const text = `💸 ${c?.name ?? "A customer"} paid ${inv.number} ($${inv.total.toFixed(2)}).`;

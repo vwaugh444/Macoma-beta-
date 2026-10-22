@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_ready ON jobs (run_at, id) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS jobs_phone_open ON jobs (phone, id) WHERE status IN ('queued', 'running');
 
+-- One free trial per number: a hash of each number that has had one, kept after deletion.
+CREATE TABLE IF NOT EXISTS trial_history (phone_hash text PRIMARY KEY, at timestamptz NOT NULL DEFAULT now());
+
 CREATE TABLE IF NOT EXISTS oauth_states (state text PRIMARY KEY, doc jsonb NOT NULL, expires_at timestamptz NOT NULL);
 
 CREATE TABLE IF NOT EXISTS rate_limits (key text NOT NULL, bucket bigint NOT NULL, count integer NOT NULL, PRIMARY KEY (key, bucket));

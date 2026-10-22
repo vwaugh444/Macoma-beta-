@@ -4,7 +4,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import * as billing from "./billing.js";
 import { disconnectAll, endSessions, providerList, userFromSession } from "./connectors.js";
-import { deleteUser, referralCount, update, type User } from "./store.js";
+import { closeAccount } from "./inbound.js";
+import { referralCount, update, type User } from "./store.js";
 
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const AGENT_NUMBER = process.env.TWILIO_PHONE_NUMBER ?? "";
@@ -109,9 +110,8 @@ export function workspaceRoutes(): Router {
   r.post("/api/me/delete-account", signedIn, async (req, res) => {
     const u = (req as Authed).user;
     if (req.body?.confirm !== "DELETE") return res.status(400).json({ error: "Type DELETE to confirm." });
-    await disconnectAll(u);
+    await closeAccount(u);
     endSessions(res, null);
-    await deleteUser(u.phone);
     res.json({ ok: true });
   });
 

@@ -4,6 +4,8 @@
 // of what it pays Macoma this month. Every reply is metered at real cost. Near the
 // line the agent switches to a cheaper model; at the allowance it pauses and offers
 // a reply pack. Nothing is billed as overage without the owner saying yes.
+import crypto from "node:crypto";
+import { db } from "./db.js";
 import { stripe, type Stripe } from "./stripeClient.js";
 import { getUser, newUsage, update, userByStripe, type PlanId, type User } from "./store.js";
 
@@ -61,13 +63,12 @@ const PLAN_MODEL: Record<PlanId, string> = {
 
 // --- the month --------------------------------------------------------------------
 
-function monthOf(user: User) {
-  return new Date().toLocaleDateString("en-CA", { timeZone: user.settings.timezone }).slice(0, 7);
-}
+// Usage months are UTC, so changing time zone never moves the month (and the meter) backward.
+const monthNow = () => new Date().toISOString().slice(0, 7);
 
 function roll(user: User) {
-  const m = monthOf(user);
-  if (user.usage.month !== m) user.usage = newUsage(m, user.usage.trialReplies);
+  const m = monthNow();
+  if (m > user.usage.month) user.usage = newUsage(m, user.usage.trialReplies);
 }
 
 const inTrial = (u: User) => u.billing.status === "trialing";
@@ -125,10 +126,13 @@ export async function gate(user: User): Promise<Gate> {
   const used = user.usage.replies;
   const allowed = repliesAllowed(user);
   if (used >= allowed) {
+    const p = plan(user);
     return {
       ok: false,
       message: inTrial(user)
-        ? `You've used all ${TRIAL.replies} trial replies. Start your plan to keep going (your reminders still fire): ${await planLink(user, b.plan)}`
+        ? b.stripeSubscriptionId
+          ? `You've used all ${TRIAL.replies} trial replies. Reply START NOW to end the trial and start your ${p.name} plan today ($${p.priceUsd}/mo), or wait until it starts on its own. Your reminders still fire.`
+          : `You've used all ${TRIAL.replies} trial replies. Start your plan to keep going (your reminders still fire): ${await planLink(user, b.plan)}`
         : `You've used this month's ${allowed} replies. Reply MORE to add ${PACK.replies} for $${PACK.priceUsd}, or UPGRADE for a bigger plan. Your reminders still fire.`,
     };
   }
@@ -189,18 +193,17 @@ export function recordModelCall(user: User | null, model: string, u: ApiUsage) {
 export async function recordReply(user: User) {
   roll(user);
   user.usage.replies += 1;
-  if (inTrial(user)) {
-    user.usage.trialReplies += 1;
-    if (user.usage.trialReplies >= TRIAL.replies) await endTrialEarly(user);
-  }
+  if (inTrial(user)) user.usage.trialReplies += 1; // at the cap the gate pauses replies; billing never starts early on its own
   update(user);
 }
 
 // GSM-7 fits 160 characters (153 per part); anything else is UCS-2 at 70 (67 per part).
-const GSM = /^[\n\r -_a-zA-Z0-9@£$¥èéùìòÇØøÅåΔΦΓΛΩΠΨΣΘΞÆæßÉ!"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà^{}\\[~\]|€]*$/;
+// GSM extension characters take two slots; UCS-2 counts UTF-16 units, so an emoji takes two.
+const GSM_BASIC = /^[\n\r !"#$%&'()*+,\-./0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà@£¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ¤^{}\\[~\]|€]*$/;
+const GSM_EXT = /[\^{}\\[~\]|€]/g;
 export function segments(text: string): number {
-  const gsm = GSM.test(text);
-  const len = gsm ? text.length : [...text].length;
+  const gsm = GSM_BASIC.test(text);
+  const len = gsm ? text.length + (text.match(GSM_EXT)?.length ?? 0) : text.length;
   const single = gsm ? 160 : 70;
   const part = gsm ? 153 : 67;
   return len <= single ? 1 : Math.ceil(len / part);
@@ -229,21 +232,65 @@ export function invoiceFeeCents(user: User, totalUsd: number): number {
 
 // --- trial and Stripe Billing ---------------------------------------------------------
 
-export function startTrial(user: User) {
-  if (user.billing.status !== "none") return;
+// One free trial per phone number, ever. A hash of the number outlives account deletion
+// (see the Privacy Policy), so delete-and-rejoin doesn't reset the trial.
+const trialKey = (phone: string) => crypto.createHash("sha256").update(`macoma-trial:${phone}`).digest("hex");
+
+export async function startTrial(user: User): Promise<boolean> {
+  if (user.billing.status !== "none") return false;
+  const r = await (await db()).query("INSERT INTO trial_history (phone_hash) VALUES ($1) ON CONFLICT DO NOTHING", [trialKey(user.phone)]);
+  if (!r.rowCount) return false; // had one before: they'll be asked to pick a plan
   user.billing.status = "trialing";
   user.billing.trialEndsAt = Date.now() + TRIAL.days * 86_400_000;
   update(user);
+  return true;
 }
 
-async function endTrialEarly(user: User) {
+// The owner asked (START NOW) to end the trial and start paying today.
+export async function startPlanNow(user: User): Promise<string> {
   const b = user.billing;
+  if (b.status !== "trialing") return describeUsage(user);
   if (stripe && b.stripeSubscriptionId) {
-    // Stripe charges the first month now; the webhook flips status to active.
-    await stripe.subscriptions.update(b.stripeSubscriptionId, { trial_end: "now" }).catch((err) => console.error("end trial", err));
-  } else {
-    b.trialEndsAt = Date.now();
+    await stripe.subscriptions.update(b.stripeSubscriptionId, { trial_end: "now" }); // the webhook flips status to active
+    return `Your ${plan(user).name} plan starts today. You'll get a receipt from Stripe.`;
   }
+  return `Start your plan here (Apple Pay works): ${await planLink(user, b.plan)}`;
+}
+
+const liveSubscription = (user: User) =>
+  Boolean(user.billing.stripeSubscriptionId) && ["trialing", "active", "past_due"].includes(user.billing.status);
+
+// Changes plan: an existing subscription is switched in place (prorated), never duplicated.
+// The plan on the account only changes when Stripe confirms (webhook), never before payment.
+export async function switchPlan(user: User, planId: PlanId, returnPath: string): Promise<{ url: string | null; message: string }> {
+  const p = PLANS[planId];
+  if (!stripe) {
+    user.billing.plan = planId; // dev mode: nothing to pay
+    update(user);
+    return { url: null, message: "Billing isn't switched on yet. Your free trial is running." };
+  }
+  if (!liveSubscription(user)) return { url: await planLink(user, planId, returnPath), message: "" };
+  if (user.billing.plan === planId) return { url: null, message: `You're already on ${p.name}.` };
+  if (!p.stripePrice) return { url: null, message: "That plan isn't available yet." };
+  const sub = await stripe.subscriptions.retrieve(user.billing.stripeSubscriptionId!);
+  await stripe.subscriptions.update(sub.id, {
+    items: [{ id: sub.items.data[0].id, price: p.stripePrice }],
+    proration_behavior: "create_prorations",
+    metadata: { phone: user.phone, plan: planId },
+  });
+  return { url: null, message: `Switched to ${p.name} ($${p.priceUsd}/mo). The difference shows on your next bill.` };
+}
+
+// Account deletion: stop billing right away (no further charges for a deleted account).
+export async function cancelNow(user: User) {
+  const b = user.billing;
+  if (stripe && b.stripeSubscriptionId && b.status !== "canceled") {
+    await stripe.subscriptions.cancel(b.stripeSubscriptionId).catch((err) => {
+      if ((err as { code?: string }).code !== "resource_missing") throw err;
+    });
+  }
+  b.status = "canceled";
+  update(user);
 }
 
 const fallbackLink = `${PUBLIC_URL}/#plans`;
@@ -253,7 +300,9 @@ export async function planLink(user: User, planId: PlanId = user.billing.plan, r
   const p = PLANS[planId];
   if (!stripe || !p.stripePrice) return fallbackLink;
   const b = user.billing;
-  const trialLeft = b.status === "trialing" && b.trialEndsAt ? b.trialEndsAt - Date.now() : 0;
+  // Keep the rest of the trial unless its replies are used up; then billing starts today.
+  const repliesLeft = user.usage.trialReplies < TRIAL.replies;
+  const trialLeft = b.status === "trialing" && b.trialEndsAt && repliesLeft ? b.trialEndsAt - Date.now() : 0;
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     line_items: [{ price: p.stripePrice, quantity: 1 }],
@@ -311,6 +360,7 @@ export async function portalLink(user: User): Promise<string> {
 // Cancel by text: ends at the close of the paid period, as the owner expects.
 export async function cancelPlan(user: User): Promise<string> {
   const b = user.billing;
+  if (b.status === "canceled" || b.status === "none") return "You don't have a plan that renews, so there's nothing to cancel.";
   if (stripe && b.stripeSubscriptionId) {
     const sub = await stripe.subscriptions.update(b.stripeSubscriptionId, { cancel_at_period_end: true });
     const end = sub.items.data[0]?.current_period_end ?? null;
@@ -323,6 +373,10 @@ export async function cancelPlan(user: User): Promise<string> {
 
 export async function resumePlan(user: User): Promise<string> {
   const b = user.billing;
+  if (b.status === "canceled" && b.stripeSubscriptionId) {
+    b.stripeSubscriptionId = null; // ended subscriptions can't be resumed; start a new one
+    update(user);
+  }
   if (stripe && b.stripeSubscriptionId) {
     await stripe.subscriptions.update(b.stripeSubscriptionId, { cancel_at_period_end: false });
     return "Your plan will keep renewing. Welcome back.";
@@ -362,19 +416,22 @@ const statusFrom = (s: Stripe.Subscription.Status): User["billing"]["status"] =>
 
 export async function handleBillingEvent(event: Stripe.Event): Promise<string | null> {
   switch (event.type) {
-    case "checkout.session.completed": {
+    case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded": {
       const s = event.data.object as Stripe.Checkout.Session;
       const user = s.metadata?.phone ? await getUser(s.metadata.phone) : undefined;
       if (!user) return null;
       if (typeof s.customer === "string") user.billing.stripeCustomerId = s.customer;
-      if (s.metadata?.kind === "pack") {
+      // A bank payment can complete checkout before the money arrives; credit the pack only once paid.
+      // (Each event id is processed once: the job queue dedupes on it.)
+      if (s.metadata?.kind === "pack" && s.payment_status === "paid") {
         roll(user);
         user.usage.packReplies += PACK.replies;
         user.usage.packRevenueUsd += (s.amount_total ?? PACK.priceUsd * 100) / 100;
         update(user);
         return `Added ${PACK.replies} replies. Thanks!`;
       }
-      if (s.metadata?.kind === "plan" && typeof s.subscription === "string") {
+      if (s.metadata?.kind === "plan" && typeof s.subscription === "string" && event.type === "checkout.session.completed") {
         user.billing.stripeSubscriptionId = s.subscription;
         user.billing.plan = (s.metadata.plan as PlanId) ?? user.billing.plan;
         update(user);

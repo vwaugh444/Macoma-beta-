@@ -292,7 +292,7 @@ async function runTool(name: string, input: any, caller: Caller): Promise<string
       return `Drafted ${inv.id}:\n${biz.invoiceText(user, inv)}`;
     }
     case "send_invoice":
-      return biz.proposeSendInvoice(user, input.id);
+      return await biz.proposeSendInvoice(user, input.id);
     case "list_invoices":
       return biz.describeInvoices(user, input.status);
     case "mark_invoice_paid": {
