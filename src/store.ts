@@ -68,7 +68,7 @@ export type ActionLog = {
 };
 
 // An Action that needs the owner to reply YES before it runs.
-export type Pending = { actionId: string; type: string; summary: string; payload: any; expiresAt: number };
+export type Pending = { actionId: string; type: string; summary: string; payload: any; expiresAt: number; shownAt?: number };
 
 export type PlanId = "personal" | "business" | "crew";
 
@@ -121,6 +121,8 @@ export type User = {
   verifiedAt: number | null;
   welcomeSentAt: number | null;
   sessionVersion?: number; // bumped on log out to end every signed-in device
+  lastOwnerTextAt?: number; // when we last texted the owner, to know what a YES is answering
+  connectVersion?: number; // bumped when a new connect link is texted, so older links stop working
   status: "pending" | "active" | "suspended";
   billing: Billing;
   usage: Usage;

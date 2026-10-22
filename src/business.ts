@@ -42,7 +42,13 @@ export function recentActions(user: User, n = 8): string {
 
 // --- confirmation gate ----------------------------------------------------------
 
-type PendingType = "message_contact" | "send_invoice" | "delete_account";
+type PendingType = "message_contact" | "send_invoice" | "delete_account" | "web_request" | "ask_agent";
+
+// Actions defined elsewhere (agent.ts) that also wait for YES. Registered to avoid a circular import.
+const actions = new Map<string, (user: User, payload: any) => Promise<string>>();
+export function registerAction(type: PendingType, run: (user: User, payload: any) => Promise<string>) {
+  actions.set(type, run);
+}
 
 export function propose(user: User, type: PendingType, summary: string, payload: unknown): string {
   if (user.pending) setActionStatus(user, user.pending.actionId, "cancelled", "replaced by a newer request");
@@ -62,6 +68,8 @@ export function exactDraft(user: User, p: Pending): string {
     const inv = user.invoices.find((i) => i.id === p.payload.invoiceId);
     return inv ? `${invoiceText(user, inv)}\nReply YES to send it or NO to cancel.` : "Reply YES to send or NO to cancel.";
   }
+  if (p.type === "web_request") return `${p.payload.method} ${p.payload.url}\nPaid only if it fits your per-call and daily limits. Reply YES to go ahead or NO to cancel.`;
+  if (p.type === "ask_agent") return `Send to the agent at ${p.payload.agent_url}, exactly:\n"${p.payload.message}"\nReply YES to send or NO to cancel.`;
   return `${p.summary}. Reply YES to confirm or NO to cancel.`;
 }
 
@@ -96,8 +104,11 @@ export async function confirmPending(user: User, onDeleteAccount: () => Promise<
         setActionStatus(user, p.actionId, "done");
         await onDeleteAccount();
         return "Done. Your account and data are deleted. Text this number again any time to start over.";
-      default:
-        throw new Error(`Unknown action ${p.type}`);
+      default: {
+        const run = actions.get(p.type);
+        if (!run) throw new Error(`Unknown action ${p.type}`);
+        result = await run(user, p.payload);
+      }
     }
     setActionStatus(user, p.actionId, "done");
     return result;
@@ -203,15 +214,20 @@ async function deliverToContact(user: User, contactId: string, body: string): Pr
 
 // --- reminders ------------------------------------------------------------------
 
+const MAX_OPEN_REMINDERS = 50;
+
 export function addReminder(
   user: User,
   r: Pick<Reminder, "kind" | "text" | "dueAt"> & Partial<Pick<Reminder, "repeat" | "contactId" | "onlyIfNoReply">>,
 ): Reminder {
   if (!Number.isFinite(r.dueAt)) throw new Error("Invalid due time. Use ISO 8601 with a UTC offset.");
+  // Every reminder is a text we pay for; keep the list to what one person can act on.
+  if (user.reminders.filter((x) => !x.done).length >= MAX_OPEN_REMINDERS)
+    throw new Error(`There are already ${MAX_OPEN_REMINDERS} open reminders. Cancel some first.`);
   const rem: Reminder = {
     id: id("r"),
     kind: r.kind,
-    text: r.text,
+    text: r.text.slice(0, 300),
     dueAt: r.dueAt,
     repeat: r.repeat ?? null,
     contactId: r.contactId ?? null,
@@ -399,12 +415,16 @@ export function markInvoicePaid(user: User, invoiceId: string, via = "owner"): I
 }
 
 // Events from owners' connected Stripe accounts (the Connect webhook endpoint).
-export async function handleConnectEvent(event: Stripe.Event, findOwner: (phone: string) => Promise<User | undefined>) {
-  if (event.type !== "invoice.paid") return;
+// Returns the note to text the owner, if any.
+export async function handleConnectEvent(
+  event: Stripe.Event,
+  findOwner: (phone: string) => Promise<User | undefined>,
+): Promise<{ owner: User; text: string } | null> {
+  if (event.type !== "invoice.paid") return null;
   const si = event.data.object as Stripe.Invoice;
   const owner = si.metadata?.owner ? await findOwner(si.metadata.owner) : undefined;
   // Only trust an invoice that came from the account this owner connected.
-  if (!owner || !si.metadata?.invoiceId || owner.billing.connectAccountId !== event.account) return;
+  if (!owner || !si.metadata?.invoiceId || owner.billing.connectAccountId !== event.account) return null;
   const inv = markInvoicePaid(owner, si.metadata.invoiceId, "stripe");
   const fee = inv.feeCents ?? 0;
   if (fee > 0 && !inv.feeRecorded) {
@@ -412,11 +432,7 @@ export async function handleConnectEvent(event: Stripe.Event, findOwner: (phone:
     inv.feeRecorded = true;
   }
   const c = owner.contacts.find((x) => x.id === inv.contactId);
-  if (!owner.optedOut) {
-    const text = `💸 ${c?.name ?? "A customer"} paid ${inv.number} ($${inv.total.toFixed(2)}).`;
-    await sendSms(owner.phone, text);
-    billing.recordSms(owner, text);
-  }
+  return { owner, text: `💸 ${c?.name ?? "A customer"} paid ${inv.number} ($${inv.total.toFixed(2)}).` };
 }
 
 export function verifyStripe(raw: Buffer, sig: string | undefined, secret: string | undefined): Stripe.Event | null {

@@ -112,13 +112,16 @@ export function startWorkers(handlers: Record<JobKind, Handler>, concurrency = N
 
 // --- rate limits shared by every web server ------------------------------------------------
 
-// Fixed-window counter: true while `key` has been used at most `max` times this window.
-export async function allow(key: string, max: number, windowMs = 3_600_000): Promise<boolean> {
+// Fixed-window counter shared by every process: adds `by` and returns the window's total.
+export async function counter(key: string, by: number, windowMs = 3_600_000): Promise<number> {
   const bucket = (Math.floor(Date.now() / windowMs) * windowMs) / 60_000; // window start, in minutes since epoch
   const { rows } = await (await db()).query(
-    `INSERT INTO rate_limits (key, bucket, count) VALUES ($1, $2, 1)
-     ON CONFLICT (key, bucket) DO UPDATE SET count = rate_limits.count + 1 RETURNING count`,
-    [key, bucket],
+    `INSERT INTO rate_limits (key, bucket, count) VALUES ($1, $2, $3)
+     ON CONFLICT (key, bucket) DO UPDATE SET count = rate_limits.count + EXCLUDED.count RETURNING count`,
+    [key, bucket, by],
   );
-  return rows[0].count <= max;
+  return rows[0].count;
 }
+
+// True while `key` has been used at most `max` times this window.
+export const allow = async (key: string, max: number, windowMs = 3_600_000) => (await counter(key, 1, windowMs)) <= max;

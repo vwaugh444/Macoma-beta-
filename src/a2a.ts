@@ -3,6 +3,7 @@
 // Client side: lets our agent discover and message any other A2A agent.
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
+import { guardedFetch } from "./netguard.js";
 
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? "http://localhost:3000").replace(/\/$/, "");
 
@@ -78,7 +79,7 @@ export function a2aHandler(run: (text: string, contextId: string) => Promise<str
 export async function fetchAgentCard(baseUrl: string) {
   const root = baseUrl.replace(/\/$/, "");
   for (const p of ["/.well-known/agent-card.json", "/.well-known/agent.json"]) {
-    const res = await fetch(root + p).catch(() => null);
+    const res = await guardedFetch(root + p).catch(() => null);
     if (res?.ok) return res.json();
   }
   throw new Error(`No A2A agent card found at ${root}`);
@@ -87,8 +88,8 @@ export async function fetchAgentCard(baseUrl: string) {
 export type Fetcher = (url: string, init: RequestInit) => Promise<{ status: number; body: string }>;
 
 export const plainFetch: Fetcher = async (url, init) => {
-  const res = await fetch(url, init);
-  return { status: res.status, body: await res.text() };
+  const res = await guardedFetch(url, init);
+  return { status: res.status, body: (await res.text()).slice(0, 8000) };
 };
 
 export function buildMessage(text: string): RequestInit {

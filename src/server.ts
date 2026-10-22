@@ -1,7 +1,7 @@
 import "dotenv/config";
 import crypto from "node:crypto";
 import express, { type Request } from "express";
-import { runAgent } from "./agent.js";
+import { a2aSpentToday, runAgent } from "./agent.js";
 import { agentCard, a2aHandler } from "./a2a.js";
 import { a2aPaywall, walletAddress, NETWORK } from "./x402.js";
 import { createUser, flush, getUser, importLegacyStore, phoneForCode, recordConsent, referralCount, update, withUnit } from "./store.js";
@@ -20,11 +20,15 @@ const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://localhost:${PORT}`).replace(/\/$/, "");
 const INVITE_ONLY = process.env.INVITE_ONLY === "true";
 const AGENT_NUMBER = process.env.TWILIO_PHONE_NUMBER ?? "";
+const OTP_COUNTRIES = (process.env.OTP_COUNTRY_CODES ?? "1").split(",").map((c) => c.trim()).filter(Boolean);
+const OTP_GLOBAL_HOURLY = Number(process.env.OTP_GLOBAL_HOURLY ?? 500);
 // web: pages, sign-in and webhooks. worker: runs queued jobs and the scheduler. all: both (dev, small installs).
 const ROLE = (process.env.ROLE ?? "all") as "web" | "worker" | "all";
 
 const app = express();
-app.set("trust proxy", true);
+// How many proxies sit in front of the app (load balancer = 1). Trusting more lets callers
+// spoof X-Forwarded-For and dodge the per-IP limits.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
 // Stripe needs the raw body for signature checks, so these go before express.json().
 // Webhooks only verify and queue; workers do the work, so these answer in milliseconds.
@@ -92,7 +96,7 @@ app.post("/api/billing/checkout", async (req, res) => {
   const plan = String(req.body?.plan ?? "") as keyof typeof billing.PLANS;
   if (!billing.PLANS[plan]) return res.status(400).json({ error: "Pick a plan." });
   try {
-    const back = req.body?.t ? `/connect.html?t=${connectToken(user)}&paid=1` : "/workspace?paid=1";
+    const back = typeof req.body?.t === "string" ? `/connect.html?t=${encodeURIComponent(req.body.t)}&paid=1` : "/workspace?paid=1";
     res.json(await billing.switchPlan(user, plan, back));
   } catch (err) {
     console.error("checkout", err);
@@ -120,7 +124,11 @@ app.post("/api/join", async (req, res) => {
   const phone = normalizePhone(String(req.body?.phone ?? ""));
   if (!phone) return res.status(400).json({ error: "That doesn't look like a phone number." });
   // Limits per IP and per number so the form can't be used to spam strangers. Shared by every server.
+  // Sign-in codes go only to countries we serve: premium-rate destinations are how SMS-pumping fraud makes money.
+  if (!OTP_COUNTRIES.some((cc) => phone.startsWith(`+${cc}`))) return res.status(400).json({ error: "Macoma isn't available for numbers in that country yet." });
   if (!(await allow(`ip:${req.ip}`, 10)) || !(await allow(`otp:${phone}`, 3))) return res.status(429).json({ error: "Too many tries. Try again later." });
+  // A ceiling for the whole service, so a botnet with many IPs can't run up the SMS bill.
+  if (!(await allow("otp:all", OTP_GLOBAL_HOURLY))) return res.status(503).json({ error: "We're getting a lot of sign-ups right now. Try again in a few minutes." });
   if (req.body?.ageConfirmed !== true || req.body?.agreed !== true)
     return res.status(400).json({ error: "Please confirm you're 18+ and agree to the terms." });
 
@@ -176,10 +184,21 @@ app.post("/api/verify", async (req, res) => {
 
 // --- A2A: other agents talk to Macoma (optionally paid via x402) ---------------
 
-app.get(["/.well-known/agent-card.json", "/.well-known/agent.json"], (_req, res) => res.json(agentCard()));
+// Off unless other agents pay per call (x402) or A2A_FREE=true. Either way it runs on the
+// budget model, per caller IP limits apply, and A2A_DAILY_CAP_USD caps the day's model spend.
 const paywall = a2aPaywall();
-if (paywall) app.use(paywall);
-app.post("/a2a", a2aHandler((text, contextId) => runAgent(text, { kind: "a2a", contextId })));
+const A2A_ON = Boolean(paywall) || process.env.A2A_FREE === "true";
+const A2A_DAILY_CAP_USD = Number(process.env.A2A_DAILY_CAP_USD ?? 5);
+if (A2A_ON) {
+  app.get(["/.well-known/agent-card.json", "/.well-known/agent.json"], (_req, res) => res.json(agentCard()));
+  app.post("/a2a", async (req, res, next) => {
+    if (!(await allow(`a2a:${req.ip}`, Number(process.env.A2A_PER_IP_HOURLY ?? 30)))) return res.status(429).json({ error: "Too many requests" });
+    if ((await a2aSpentToday()) >= A2A_DAILY_CAP_USD) return res.status(503).json({ error: "Macoma isn't taking agent tasks right now. Try tomorrow." });
+    next();
+  });
+  if (paywall) app.use(paywall);
+  app.post("/a2a", a2aHandler((text, contextId) => runAgent(text, { kind: "a2a", contextId }, billing.BUDGET_MODEL)));
+}
 
 app.get("/healthz", (_req, res) => res.send("ok"));
 
@@ -204,7 +223,7 @@ async function main() {
       console.log(`  Web:     ${PUBLIC_URL}`);
       console.log(`  SMS:     ${smsEnabled ? `Twilio ${process.env.TWILIO_MESSAGING_SERVICE_SID ? "messaging service" : AGENT_NUMBER}` : "console (dev mode). POST /sms with From & Body to simulate"}`);
       console.log(`  Stripe:  ${biz.stripeEnabled ? "billing + Connect invoices" : "off (no billing; invoices use the owner's payment link)"}`);
-      console.log(`  A2A:     ${PUBLIC_URL}/.well-known/agent-card.json ${paywall ? `(paid, ${process.env.A2A_PRICE ?? "$0.01"})` : "(free)"}`);
+      console.log(`  A2A:     ${PUBLIC_URL}/.well-known/agent-card.json ${paywall ? `(paid, ${process.env.A2A_PRICE ?? "$0.01"})` : A2A_ON ? "(free, capped)" : "(off: set X402_PAY_TO or A2A_FREE=true)"}`);
       console.log(`  x402:    ${walletAddress ? `agent wallet ${walletAddress} on ${NETWORK}` : "no agent wallet; paid calls disabled"}`);
     });
     process.on("SIGTERM", () => server.close());

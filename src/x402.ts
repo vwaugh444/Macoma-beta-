@@ -8,6 +8,7 @@ import { ExactEvmScheme as ExactEvmServer } from "@x402/evm/exact/server";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { privateKeyToAccount } from "viem/accounts";
+import { guardedFetch } from "./netguard.js";
 
 // Base Sepolia by default so the demo runs on testnet USDC.
 export const NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:${string}`;
@@ -18,7 +19,7 @@ const account = key ? privateKeyToAccount(key) : null;
 export const walletAddress = account?.address ?? null;
 
 const payingFetch = account
-  ? wrapFetchWithPaymentFromConfig(fetch, {
+  ? wrapFetchWithPaymentFromConfig(guardedFetch, {
       schemes: [{ network: NETWORK, client: new ExactEvmClient(account) }],
     })
   : null;
@@ -39,7 +40,7 @@ export async function payAndFetch(url: string, init?: RequestInit): Promise<Paid
 // Reads the price an x402 endpoint asks for, without paying, so the agent can
 // check it against the user's budget first.
 export async function quote(url: string, init?: RequestInit): Promise<{ free: boolean; usd: number | null; raw: unknown }> {
-  const res = await fetch(url, init);
+  const res = await guardedFetch(url, init);
   if (res.status !== 402) return { free: true, usd: 0, raw: null };
   const header = res.headers.get("PAYMENT-REQUIRED");
   let raw: any = null;

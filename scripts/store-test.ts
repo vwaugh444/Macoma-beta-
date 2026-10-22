@@ -17,7 +17,7 @@ const { db } = await import("../src/db.js");
 const biz = await import("../src/business.js");
 const sched = await import("../src/scheduler.js");
 const queue = await import("../src/queue.js");
-const { outbox } = await import("../src/sms.js");
+const { outbox, sendSms } = await import("../src/sms.js");
 
 // Clear rows left by an earlier run (test numbers only).
 for (const sql of ["DELETE FROM users WHERE phone LIKE '+1555%'", "DELETE FROM jobs WHERE phone LIKE '+1555%'", "DELETE FROM contact_index WHERE owner_phone LIKE '+1555%'", "DELETE FROM consent_log WHERE phone LIKE '+1555%'", "DELETE FROM rate_limits WHERE key LIKE 'test:%'"])
@@ -32,6 +32,8 @@ const fresh = async (phone: string) => {
     x.status = "active";
     x.verifiedAt = Date.now();
     x.welcomeSentAt = Date.now();
+    x.billing.status = "trialing";
+    x.billing.trialEndsAt = Date.now() + 14 * 86_400_000;
     store.update(x);
   });
   return u;
@@ -101,7 +103,7 @@ check("next_due_at follows reminders, and a tick sends and advances it", async (
   const due = await store.duePhones();
   assert.ok(due.some((d) => d.phone === "+15550000003"));
   const before = outbox.length;
-  await store.unitOfWork(async () => sched.tickUser((await store.getUser("+15550000003"))!, async () => {}));
+  await store.unitOfWork(async () => sched.tickUser((await store.getUser("+15550000003"))!, async () => {}, (u, b) => sendSms(u.phone, b)));
   assert.ok(outbox.slice(before).some((m) => m.to === "+15550000003" && m.body.includes("copper fittings")));
   assert.ok(!(await store.duePhones()).some((d) => d.phone === "+15550000003"));
   const { rows } = await (await db()).query("SELECT next_due_at FROM users WHERE phone = $1", ["+15550000003"]);
@@ -121,7 +123,7 @@ check("the morning brief is due once per local day", async () => {
   const u = await load("+15550000004");
   assert.ok(sched.nextDueAt(u)! <= Date.now(), "brief should be due now");
   const before = outbox.length;
-  await store.unitOfWork(async () => sched.tickUser((await store.getUser("+15550000004"))!, async () => {}));
+  await store.unitOfWork(async () => sched.tickUser((await store.getUser("+15550000004"))!, async () => {}, (u, b) => sendSms(u.phone, b)));
   assert.ok(outbox.slice(before).some((m) => m.body.startsWith("Good morning")));
   const after = await load("+15550000004");
   assert.ok(sched.nextDueAt(after)! > Date.now(), "brief should not be due again today");
@@ -184,6 +186,31 @@ check("deleting an account removes it and its routing, keeps consent", async () 
   assert.equal(await store.unitOfWork(() => store.ownerForContactPhone("+15550006666")), undefined);
   const { rows } = await (await db()).query("SELECT count(*)::int AS n FROM consent_log WHERE phone = $1", ["+15550000006"]);
   assert.equal(rows[0].n, 1);
+});
+
+check("scheduled texts stop without a plan, and missed reminders arrive as one catch-up", async () => {
+  await fresh("+15550000007");
+  await store.unitOfWork(async () => {
+    const u = (await store.getUser("+15550000007"))!;
+    u.settings.digestHour = null;
+    u.billing.status = "canceled";
+    biz.addReminder(u, { kind: "reminder", text: "missed one", dueAt: Date.now() - 2 * 86_400_000 });
+    biz.addReminder(u, { kind: "reorder", text: "weekly order", dueAt: Date.now() - 3 * 86_400_000, repeat: { every: 1, unit: "day" } });
+  });
+  assert.equal(sched.nextDueAt(await load("+15550000007")), null);
+  await store.unitOfWork(async () => {
+    const u = (await store.getUser("+15550000007"))!;
+    u.billing.status = "active";
+    store.update(u);
+  });
+  const before = outbox.length;
+  await store.unitOfWork(async () => sched.tickUser((await store.getUser("+15550000007"))!, async () => {}, (u, b) => sendSms(u.phone, b)));
+  const sent = outbox.slice(before).filter((m) => m.to === "+15550000007");
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].body, /missed one/);
+  assert.match(sent[0].body, /weekly order/);
+  const u = await load("+15550000007");
+  assert.ok(u.reminders.find((r) => r.repeat)!.dueAt > Date.now());
 });
 
 check("shared rate limit counts across calls", async () => {

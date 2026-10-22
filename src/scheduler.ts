@@ -4,12 +4,12 @@
 // column (users.next_due_at); this loop asks Postgres for owners that are due and queues
 // one "tick" job each, which runs in that owner's lane like an inbound text.
 import { fmtDate, nextOccurrence } from "./business.js";
-import { sendSms } from "./sms.js";
-import { recordSms, trialReminder } from "./billing.js";
+import { trialReminder } from "./billing.js";
 import { enqueue } from "./queue.js";
 import { duePhones, setDueIndexer, update, type Reminder, type User } from "./store.js";
 
 const POLL_MS = 15_000;
+const CATCH_UP_AFTER_MS = 6 * 3_600_000;
 const WELCOME_FALLBACK_MS = 15 * 60_000;
 const TRIAL_NOTICE_MS = 3 * 86_400_000;
 const SLOT_MS = 15 * 60_000; // time zones are offset by whole quarter hours
@@ -51,8 +51,11 @@ const safe = <T>(fn: () => T): T | null => {
 };
 
 // When this owner next needs a tick, or null. Stored on every save.
+// No plan, no scheduled texts. Reminders resume (with a catch-up) when a plan starts.
+const sendsScheduled = (u: User) => u.status === "active" && !u.optedOut && u.billing.status !== "none" && u.billing.status !== "canceled";
+
 export function nextDueAt(user: User): number | null {
-  if (user.status !== "active" || user.optedOut) return null;
+  if (!sendsScheduled(user)) return null;
   const times = [
     ...user.reminders.filter((r) => !r.done).map((r) => r.dueAt),
     safe(() => nextDigestAt(user)),
@@ -100,19 +103,29 @@ function brief(user: User): string | null {
 
 // Runs inside the owner's job lane. Always marks the owner changed, so the save moves
 // next_due_at forward even when nothing was sent.
-export async function tickUser(user: User, sendWelcome: (u: User) => Promise<void>) {
+export async function tickUser(user: User, sendWelcome: (u: User) => Promise<unknown>, textOwner: (u: User, body: string) => Promise<unknown>) {
   update(user);
-  if (user.status !== "active" || user.optedOut) return;
+  if (!sendsScheduled(user)) return;
   const now = Date.now();
-  const send = (text: string, what: string) =>
-    sendSms(user.phone, text).then(() => recordSms(user, text), (err) => console.error(`${what} sms failed`, err));
+  const send = (text: string, what: string) => textOwner(user, text).catch((err) => console.error(`${what} sms failed`, err));
 
+  // On time (or nearly): its own text. Missed during an outage, an opt-out or a lapsed plan:
+  // one catch-up text, and repeating reminders skip ahead instead of firing once per miss.
+  const missed: string[] = [];
   for (const r of user.reminders) {
     if (r.done || r.dueAt > now) continue;
+    const late = now - r.dueAt > CATCH_UP_AFTER_MS;
     const text = reminderText(user, r);
-    if (r.repeat) r.dueAt = nextOccurrence(r);
-    else r.done = true;
-    if (text) await send(text, "reminder");
+    if (r.repeat) {
+      r.dueAt = nextOccurrence(r);
+      for (let i = 0; r.dueAt <= now && i < 1000; i++) r.dueAt = nextOccurrence(r);
+    } else r.done = true;
+    if (text && late) missed.push(r.text);
+    else if (text) await send(text, "reminder");
+  }
+  if (missed.length) {
+    const list = missed.slice(0, 5).map((t) => `• ${t}`).join("\n");
+    await send(`While I couldn't text you, these came due:\n${list}${missed.length > 5 ? `\n…and ${missed.length - 5} more` : ""}`, "catch-up");
   }
 
   const heads = trialReminder(user);

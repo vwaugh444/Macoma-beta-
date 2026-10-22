@@ -43,35 +43,57 @@ export async function closeAccount(user: User) {
   await deleteUser(user.phone);
 }
 
-// Texts to the owner are metered: every segment counts toward the margin rule.
-export async function textOwner(user: User, body: string) {
+// Every text to an owner goes through here: metered against the margin rule, and never sent
+// to an opted-out or suspended number (except the one STOP confirmation, via `force`).
+export async function textOwner(user: User, body: string, opts: { force?: boolean } = {}) {
+  if (!opts.force && (user.optedOut || user.status === "suspended")) return;
   await sendSms(user.phone, body);
   billing.recordSms(user, body);
+  user.lastOwnerTextAt = Date.now();
+  update(user);
 }
 
 // The first text arrives when the owner finishes the connect window, or 15 minutes after
-// they verified if they close it early (the scheduler handles that case).
-export async function sendWelcome(user: User) {
-  if (user.welcomeSentAt || user.optedOut || user.status !== "active") return;
+// they verified if they close it early (the scheduler handles that case). Returns whether
+// a welcome went out now; on a send failure it stays unsent so the scheduler tries again.
+export async function sendWelcome(user: User): Promise<boolean> {
+  if (user.welcomeSentAt || user.optedOut || user.status !== "active") return false;
   user.welcomeSentAt = Date.now();
   update(user);
   const linked = Object.keys(user.connections).length ? ` I can see your ${connectedSummary(user)}.` : "";
-  await textOwner(user, WELCOME_TEXT + linked).catch((err) => console.error("welcome sms failed", err));
+  try {
+    await textOwner(user, WELCOME_TEXT + linked);
+    return true;
+  } catch (err) {
+    console.error("welcome sms failed", err);
+    user.welcomeSentAt = null;
+    update(user);
+    return false;
+  }
 }
 
 async function handleOwner(user: User, text: string) {
   const word = text.toUpperCase().replace(/[.!]+$/, "").trim();
   const reply = (body: string) => textOwner(user, body);
+  // Sends a reply that ends with a draft awaiting YES, and notes when the owner saw it.
+  const replyWithDraft = async (body: string) => {
+    await reply(body);
+    if (user.pending) user.pending.shownAt = user.lastOwnerTextAt;
+    update(user);
+  };
   billing.recordSms(user, text); // inbound segments cost money too
 
+  // STOP to this number stops everything from it, including texts a business sends through Macoma.
   if (STOP_WORDS.has(word)) {
     user.optedOut = true;
     update(user);
-    return reply("You're unsubscribed from Macoma and won't get more texts. Reply START to come back.");
+    await setDoNotText(user.phone, true);
+    return textOwner(user, "You're unsubscribed from Macoma and won't get more texts. Reply START to come back.", { force: true });
   }
   if (START_WORDS.has(word) || (user.optedOut && word === "YES")) {
     user.optedOut = false;
     update(user);
+    await setDoNotText(user.phone, false);
     return reply("Welcome back. Text me anything.");
   }
   if (user.optedOut || user.status === "suspended") return;
@@ -83,12 +105,23 @@ async function handleOwner(user: User, text: string) {
     user.status = "active";
     user.verifiedAt = Date.now();
     update(user);
-    await billing.startTrial(user);
+    if (!(await billing.startTrial(user))) {
+      // This number had a free trial before (the account was deleted since).
+      user.welcomeSentAt = Date.now();
+      update(user);
+      return reply(`Welcome back to Macoma. Your free trial was used earlier, so pick a plan to start again (Apple Pay works): ${await billing.planLink(user)}`);
+    }
     await sendWelcome(user);
     return reply(`Want me to see your calendar or send invoices you get paid for by Apple Pay? Connect your accounts here (link works for 30 min): ${connectUrl(user)}`);
   }
 
-  if (user.pending && YES_WORDS.has(word)) return reply(await biz.confirmPending(user, () => closeAccount(user)));
+  if (user.pending && YES_WORDS.has(word)) {
+    // A YES only approves the draft if it was the last thing we texted. If a reminder or a
+    // customer's message arrived since, show the draft again rather than guess.
+    const p = user.pending;
+    if (!p.shownAt || (user.lastOwnerTextAt ?? 0) > p.shownAt) return replyWithDraft(`To be sure, you're approving this:\n${biz.exactDraft(user, p)}`);
+    return reply(await biz.confirmPending(user, () => closeAccount(user)));
+  }
   if (user.pending && NO_WORDS.has(word)) {
     const what = biz.cancelPending(user);
     return reply(what ? `Cancelled: ${what}` : "Nothing to cancel.");
@@ -108,7 +141,7 @@ async function handleOwner(user: User, text: string) {
   if (word === "START PLAN" || word === "RESUME PLAN") return reply(await billing.resumePlan(user));
   if (word === "DELETE MY DATA" || word === "DELETE ACCOUNT") {
     biz.propose(user, "delete_account", "Delete account and all data", {});
-    return reply("This permanently deletes your contacts, reminders, invoices and history. Reply YES to confirm or NO to keep everything.");
+    return replyWithDraft("This permanently deletes your contacts, reminders, invoices and history, and stops your plan. Reply YES to confirm or NO to keep everything.");
   }
 
   const g = await billing.gate(user);
@@ -119,22 +152,34 @@ async function handleOwner(user: User, text: string) {
   // The owner approves the server's exact draft, never the model's paraphrase of it.
   const p = user.pending;
   if (p && p.actionId !== pendingBefore) answer = `${answer}\n\n${biz.exactDraft(user, p)}`;
-  return reply(g.notice ? `${answer}\n\n${g.notice}` : answer);
+  const body = g.notice ? `${answer}\n\n${g.notice}` : answer;
+  return p && p.actionId !== pendingBefore ? replyWithDraft(body) : reply(body);
 }
 
 // A customer or lead texting back after we messaged them on an owner's behalf.
 async function handleContactReply(phone: string, text: string): Promise<boolean> {
   const word = text.toUpperCase().replace(/[.!]+$/, "");
   const match = await ownerForContactPhone(phone);
+  // Texts to and from a business's contacts are part of that business's usage.
+  const toContact = async (body: string) => {
+    await sendSms(phone, body);
+    if (match) billing.recordSms(match.owner, body);
+  };
+  if (match) billing.recordSms(match.owner, text);
   if (STOP_WORDS.has(word)) {
     await setDoNotText(phone, true);
-    await sendSms(phone, "You won't get more texts from this number. Reply START to undo.");
-    if (match && !match.owner.optedOut) await sendSms(match.owner.phone, `${match.contact.name} opted out of texts. I won't message them again.`);
+    await toContact("You won't get more texts from this number. Reply START to undo.");
+    if (match) await textOwner(match.owner, `${match.contact.name} opted out of texts. I won't message them again.`);
     return true;
   }
   if (START_WORDS.has(word) && (await isDoNotText(phone))) {
     await setDoNotText(phone, false);
-    await sendSms(phone, "You're resubscribed.");
+    await toContact("You're resubscribed.");
+    return true;
+  }
+  if (HELP_WORDS.has(word) && match) {
+    const from = match.owner.settings.business ?? match.owner.settings.name ?? "a business";
+    await toContact(`Texts from ${from}, sent with Macoma. Reply STOP to opt out. Help: ${SUPPORT_EMAIL}. Msg & data rates may apply.`);
     return true;
   }
   if (!match) return false;
@@ -142,7 +187,7 @@ async function handleContactReply(phone: string, text: string): Promise<boolean>
   contact.lastInboundAt = Date.now();
   biz.logAction(owner, { type: "contact_reply", summary: `${contact.name} replied: ${text.slice(0, 120)}`, status: "done" });
   update(owner);
-  if (!owner.optedOut) await textOwner(owner, `💬 ${contact.name} (${contact.kind}) replied:\n"${text}"\nWant me to answer?`);
+  await textOwner(owner, `💬 ${contact.name} (${contact.kind}) replied:\n"${text}"\nTell me what to say back, or I'll leave it with you.`);
   return true;
 }
 
@@ -154,12 +199,11 @@ async function inboundSms(phone: string, text: string) {
     if (await handleContactReply(phone, text)) return;
     if (await isDoNotText(phone)) return;
     if (INVITE_ONLY) return await sendSms(phone, `Macoma is invite-only for now. Get a link from a friend, or join the waitlist at ${PUBLIC_URL}`);
-    await createUser(phone, null);
-    await sendSms(phone, TERMS_PROMPT);
+    await textOwner(await createUser(phone, null), TERMS_PROMPT);
   } catch (err) {
     console.error("inbound error", err);
     const u = await getUser(phone).catch(() => undefined);
-    if (u && !u.optedOut) await sendSms(phone, "Something broke on my end. Try again in a minute.").catch(() => {});
+    if (u) await textOwner(u, "Something broke on my end. Try again in a minute.").catch(() => {});
   }
 }
 
@@ -171,14 +215,17 @@ export const jobHandlers: Record<JobKind, (job: Job) => Promise<void>> = {
     const event = job.payload as Stripe.Event;
     const note = await billing.handleBillingEvent(event);
     const owner = await billing.billingOwnerFor(event);
-    if (note && owner && !owner.optedOut) await textOwner(owner, note);
+    if (note && owner) await textOwner(owner, note);
   },
 
   // Owners' connected Stripe accounts: invoice paid → tell the owner, count the platform fee.
-  stripe_connect: (job) => biz.handleConnectEvent(job.payload as Stripe.Event, getUser),
+  stripe_connect: async (job) => {
+    const paid = await biz.handleConnectEvent(job.payload as Stripe.Event, getUser);
+    if (paid) await textOwner(paid.owner, paid.text);
+  },
 
   tick: async (job) => {
     const user = await getUser(job.phone);
-    if (user) await tickUser(user, sendWelcome);
+    if (user) await tickUser(user, sendWelcome, textOwner);
   },
 };
