@@ -9,11 +9,16 @@ const from = process.env.TWILIO_PHONE_NUMBER;
 export const smsEnabled = Boolean(sid && token && from);
 const client = smsEnabled ? twilio(sid, token) : null;
 
+// In dev mode every text is also kept here, so tests and evals can check who got what.
+export const outbox: { to: string; body: string; at: number }[] = [];
+
 export async function sendSms(to: string, body: string) {
   // Keep replies text-sized; carriers split long bodies into segments anyway.
   const text = body.length > 1500 ? body.slice(0, 1497) + "..." : body;
   if (!client) {
-    console.log(`\n[sms → ${to}]\n${text}\n`);
+    outbox.push({ to, body: text, at: Date.now() });
+    if (outbox.length > 500) outbox.shift();
+    if (process.env.QUIET_SMS !== "true") console.log(`\n[sms → ${to}]\n${text}\n`);
     return;
   }
   await client.messages.create({ to, from: from!, body: text });

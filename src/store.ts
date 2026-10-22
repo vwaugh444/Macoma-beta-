@@ -73,6 +73,7 @@ export type Billing = {
   connectAccountId: string | null; // the owner's own Stripe account, for invoices
   extraSeats: number;
   extraLines: number;
+  trialReminderSent: boolean;
 };
 
 // One calendar month of metered use. Reset when `month` changes.
@@ -158,6 +159,7 @@ export const newBilling = (): Billing => ({
   connectAccountId: null,
   extraSeats: 0,
   extraLines: 0,
+  trialReminderSent: false,
 });
 
 export const newUsage = (month: string, trialReplies = 0): Usage => ({
@@ -180,7 +182,7 @@ try {
   db = { ...db, ...JSON.parse(fs.readFileSync(FILE, "utf8")) };
   // Records written before billing and connectors existed.
   for (const u of Object.values(db.users)) {
-    u.billing ??= newBilling();
+    u.billing = { ...newBilling(), ...(u.billing ?? {}) };
     u.usage ??= newUsage(today());
     u.connections ??= {};
     u.verifiedAt ??= u.consent?.at ?? null;

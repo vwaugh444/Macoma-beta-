@@ -1,7 +1,7 @@
 // Ticks every 30s: fires due reminders and the owner's morning brief.
 import { fmtDate, localHour, nextOccurrence } from "./business.js";
 import { sendSms } from "./sms.js";
-import { recordSms } from "./billing.js";
+import { recordSms, trialReminder } from "./billing.js";
 import { allUsers, today, update, type Reminder, type User } from "./store.js";
 
 const TICK_MS = 30_000;
@@ -55,6 +55,9 @@ async function tick() {
       changed = true;
       if (text) await sendSms(user.phone, text).then(() => recordSms(user, text), (err) => console.error("reminder sms failed", err));
     }
+
+    const heads = trialReminder(user);
+    if (heads) await sendSms(user.phone, heads).then(() => recordSms(user, heads), (err) => console.error("trial reminder failed", err));
 
     const day = today(user.settings.timezone);
     if (user.settings.digestHour !== null && localHour(user) === user.settings.digestHour && user.settings.lastDigestDay !== day) {

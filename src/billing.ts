@@ -266,6 +266,13 @@ export async function planLink(user: User, planId: PlanId = user.billing.plan, r
       ...(trialLeft > 48 * 3_600_000 ? { trial_end: Math.floor((Date.now() + trialLeft) / 1000) } : {}),
     },
     payment_method_collection: "always",
+    // California's auto-renewal law wants separate, express consent to a trial that converts to paid.
+    consent_collection: { terms_of_service: "required" },
+    custom_text: {
+      terms_of_service_acceptance: {
+        message: `I agree to the [Terms](${PUBLIC_URL}/terms). After the free trial my ${p.name} plan renews every month at $${p.priceUsd} until I cancel. I can cancel anytime by texting CANCEL PLAN.`,
+      },
+    },
     success_url: `${PUBLIC_URL}${returnPath}`,
     cancel_url: `${PUBLIC_URL}${returnPath.replace("paid=1", "paid=0")}`,
   });
@@ -332,6 +339,20 @@ export function describeUsage(user: User): string {
       ? `Trial: ${Math.max(0, TRIAL.replies - user.usage.trialReplies)} replies or ${Math.max(0, Math.ceil((b.trialEndsAt - Date.now()) / 86_400_000))} days left`
       : `${p.name} plan (${b.status})`;
   return `${status}. This month: ${user.usage.replies}/${repliesAllowed(user)} replies, ${user.usage.customerTexts}/${customerTextsAllowed(user)} customer texts.`;
+}
+
+// Texted 3 days before a trial converts. Returns the text, or null when nothing is due.
+export function trialReminder(user: User): string | null {
+  const b = user.billing;
+  if (b.status !== "trialing" || b.trialReminderSent || !b.trialEndsAt) return null;
+  if (b.trialEndsAt - Date.now() > 3 * 86_400_000) return null;
+  b.trialReminderSent = true;
+  update(user);
+  const p = plan(user);
+  const day = new Date(b.trialEndsAt).toLocaleDateString("en-US", { timeZone: user.settings.timezone, weekday: "long", month: "short", day: "numeric" });
+  return b.stripeSubscriptionId
+    ? `Heads-up: your free trial ends ${day}. Then your ${p.name} plan is $${p.priceUsd}/month. Nothing to do if you're staying. Text CANCEL PLAN to stop it.`
+    : `Heads-up: your free trial ends ${day}. Text UPGRADE to keep your assistants going after that.`;
 }
 
 // --- Stripe webhooks (platform account) -------------------------------------------------
