@@ -40,6 +40,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-font-smoothing: antialiased; scroll-behavior: smooth; overflow-x: clip; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body {

@@ -111,6 +111,7 @@ export type User = {
   createdAt: number;
   verifiedAt: number | null;
   welcomeSentAt: number | null;
+  sessionVersion?: number; // bumped on log out to end every signed-in device
   status: "pending" | "active" | "suspended";
   billing: Billing;
   usage: Usage;

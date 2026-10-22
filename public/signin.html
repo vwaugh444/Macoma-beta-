@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sign in · Macoma</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <style>
+    /* Layout: one centered glass sheet, two steps: number, then the 6-digit code. */
+    main { position: relative; z-index: 1; min-height: 100vh; display: grid; place-items: center; padding-block: calc(env(safe-area-inset-top, 0px) + 32px) 40px; }
+    .sheet { width: min(460px, 100%); border-radius: 32px; padding: 32px 24px; display: grid; gap: 18px; }
+    .brand { display: flex; align-items: center; gap: 10px; font: 700 20px/1 var(--round); text-decoration: none; }
+    h1 { font-size: clamp(30px, 7vw, 38px); line-height: 1.05; }
+    .sub { color: var(--muted); }
+    .phone-row { display: flex; align-items: stretch; background: var(--glass-strong); border: 1px solid var(--glass-edge); border-radius: 18px; overflow: hidden; }
+    .phone-row:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 45%, transparent); }
+    .phone-row select { border: 0; background: transparent; color: var(--ink); font: 500 17px/1 var(--sans); padding: 0 8px 0 14px; border-right: 1px solid var(--hairline); }
+    .phone-row input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); font: 500 19px/1 var(--sans); padding: 16px 14px; }
+    .phone-row :focus { outline: none; }
+    .wide { width: 100%; }
+    .boxes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+    .boxes input { width: 100%; aspect-ratio: 1 / 1.15; text-align: center; font: 600 26px/1 var(--sans); color: var(--ink); background: var(--glass-strong); border: 1px solid var(--glass-edge); border-radius: 14px; }
+    .boxes input:focus { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 45%, transparent); }
+    .links { font-size: 14px; color: var(--muted); }
+    .links button { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; cursor: pointer; }
+    .links button:disabled { color: var(--muted); cursor: default; }
+    .step { display: none; }
+    .step.on { display: grid; gap: 18px; }
+  </style>
+</head>
+<body>
+<div class="fields" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+<main>
+  <div class="sheet glass">
+    <a class="brand" href="/"><span data-face="biz" data-size="34"></span>Macoma</a>
+
+    <form class="step on" id="s1" novalidate>
+      <h1>Sign in to Macoma</h1>
+      <p class="sub">We'll text you a 6-digit code. No password.</p>
+      <div class="phone-row">
+        <select id="cc" aria-label="Country code">
+          <option value="1">🇺🇸 +1</option>
+          <option value="1">🇨🇦 +1</option>
+          <option value="52">🇲🇽 +52</option>
+          <option value="44">🇬🇧 +44</option>
+          <option value="61">🇦🇺 +61</option>
+          <option value="353">🇮🇪 +353</option>
+        </select>
+        <input id="phone" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="(555) 000-0000" aria-label="Mobile number">
+      </div>
+      <p class="fine">By tapping Send code, you confirm you're 18 or older, agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/sms-terms" target="_blank">SMS terms</a>, and acknowledge the <a href="/privacy" target="_blank">Privacy Policy</a>. You'll get texts from Macoma at this number; some are automated. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help.</p>
+      <button class="cta wide" id="send" type="submit">Send code →</button>
+      <p class="msg" id="m1" role="alert"></p>
+    </form>
+
+    <form class="step" id="s2" novalidate>
+      <h1>Enter your code</h1>
+      <p class="sub">We texted a 6-digit code to <strong id="sentTo"></strong>.</p>
+      <div class="boxes" id="boxes">
+        <input inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="Digit 1">
+        <input inputmode="numeric" maxlength="1" aria-label="Digit 2">
+        <input inputmode="numeric" maxlength="1" aria-label="Digit 3">
+        <input inputmode="numeric" maxlength="1" aria-label="Digit 4">
+        <input inputmode="numeric" maxlength="1" aria-label="Digit 5">
+        <input inputmode="numeric" maxlength="1" aria-label="Digit 6">
+      </div>
+      <p class="msg" id="m2" role="alert"></p>
+      <p class="links">No code yet? Check filtered or blocked messages.<br><button type="button" id="resend" disabled>Send a new code in 30s</button> or <button type="button" id="change">change number</button>.</p>
+    </form>
+  </div>
+</main>
+<script src="/faces.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const ref = new URLSearchParams(location.search).get("ref");
+  const boxes = [...$("boxes").querySelectorAll("input")];
+  let e164 = "";
+  let timer = 0;
+
+  async function post(url, body) {
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Something went wrong. Try again.");
+    return data;
+  }
+
+  // Already signed in? Go straight to the workspace.
+  fetch("/api/me").then((r) => { if (r.ok) location.replace("/workspace"); }).catch(() => {});
+
+  $("phone").addEventListener("input", () => {
+    if ($("cc").value !== "1") return;
+    const d = $("phone").value.replace(/\D/g, "").slice(0, 10);
+    $("phone").value = d.length > 6 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : d.length > 3 ? `(${d.slice(0, 3)}) ${d.slice(3)}` : d;
+  });
+
+  function countdown() {
+    let left = 30;
+    const b = $("resend");
+    b.disabled = true;
+    clearInterval(timer);
+    const tick = () => { b.textContent = left > 0 ? `Send a new code in ${left}s` : "Send a new code"; b.disabled = left > 0; left--; };
+    tick();
+    timer = setInterval(() => { tick(); if (left < 0) clearInterval(timer); }, 1000);
+  }
+
+  async function sendCode() {
+    await post("/api/join", { phone: e164, ref, ageConfirmed: true, agreed: true });
+    countdown();
+  }
+
+  $("s1").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const m = $("m1"); m.className = "msg"; m.textContent = "";
+    const digits = $("phone").value.replace(/\D/g, "");
+    if (digits.length < 6) { m.className = "msg err"; m.textContent = "Enter your mobile number."; return; }
+    e164 = `+${$("cc").value}${digits}`;
+    $("send").disabled = true;
+    try {
+      await sendCode();
+      $("sentTo").textContent = `+${$("cc").value} ${$("phone").value}`;
+      $("s1").classList.remove("on"); $("s2").classList.add("on");
+      boxes[0].focus();
+    } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+    finally { $("send").disabled = false; }
+  });
+
+  const code = () => boxes.map((b) => b.value).join("");
+  async function verify() {
+    const m = $("m2"); m.className = "msg"; m.textContent = "";
+    try {
+      const data = await post("/api/verify", { phone: e164, code: code() });
+      location.href = data.next || "/workspace";
+    } catch (err) {
+      m.className = "msg err"; m.textContent = err.message;
+      boxes.forEach((b) => (b.value = ""));
+      boxes[0].focus();
+    }
+  }
+  function fill(str, from = 0) {
+    const d = str.replace(/\D/g, "").slice(0, 6 - from).split("");
+    d.forEach((ch, i) => (boxes[from + i].value = ch));
+    const next = Math.min(from + d.length, 5);
+    boxes[next].focus();
+    if (code().length === 6) verify();
+  }
+  boxes.forEach((b, i) => {
+    b.addEventListener("input", () => {
+      const v = b.value;
+      b.value = "";
+      if (v) fill(v, i);
+    });
+    b.addEventListener("keydown", (e) => {
+      if (e.key === "Backspace" && !b.value && i > 0) { boxes[i - 1].value = ""; boxes[i - 1].focus(); e.preventDefault(); }
+    });
+    b.addEventListener("paste", (e) => { e.preventDefault(); fill(e.clipboardData.getData("text"), i); });
+  });
+  $("s2").addEventListener("submit", (e) => { e.preventDefault(); if (code().length === 6) verify(); });
+
+  $("resend").addEventListener("click", async () => {
+    const m = $("m2"); m.className = "msg"; m.textContent = "";
+    try { await sendCode(); m.className = "msg ok"; m.textContent = "New code sent."; }
+    catch (err) { m.className = "msg err"; m.textContent = err.message; }
+  });
+  $("change").addEventListener("click", () => {
+    clearInterval(timer);
+    boxes.forEach((b) => (b.value = ""));
+    $("s2").classList.remove("on"); $("s1").classList.add("on");
+    $("phone").focus();
+  });
+})();
+</script>
+</body>
+</html>

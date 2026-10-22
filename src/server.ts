@@ -21,7 +21,8 @@ import {
 import { normalizePhone, sendSms, smsEnabled, verifyTwilio } from "./sms.js";
 import * as biz from "./business.js";
 import * as billing from "./billing.js";
-import { connectorRoutes, connectToken, connectUrl, connectedSummary, userFromToken } from "./connectors.js";
+import { connectorRoutes, connectToken, connectUrl, connectedSummary, startSession, whoIs } from "./connectors.js";
+import { workspaceRoutes } from "./workspace.js";
 import { stripeEnabled } from "./stripeClient.js";
 import { startScheduler } from "./scheduler.js";
 
@@ -35,7 +36,7 @@ const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL ?? "support@example.com";
 const STOP_WORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT", "REVOKE"]);
 const START_WORDS = new Set(["START", "UNSTOP"]);
 const HELP_WORDS = new Set(["HELP", "INFO"]);
-const YES_WORDS = new Set(["YES", "Y", "SEND", "CONFIRM", "OK", "AGREE"]);
+const YES_WORDS = new Set(["YES", "Y", "SEND", "CONFIRM", "AGREE"]); // not "OK": too casual to send a text to a customer
 const NO_WORDS = new Set(["NO", "N", "DONT", "DON'T", "NEVERMIND"]);
 
 const HELP_TEXT = `Macoma: an AI assistant you text. Reply PLAN for your usage, MORE for extra replies, CONNECT to link your calendar or Stripe, LOG for recent actions, CANCEL PLAN to stop billing, DELETE MY DATA to erase your account, STOP to opt out. Help: ${SUPPORT_EMAIL}. Msg & data rates may apply.`;
@@ -89,18 +90,20 @@ async function sendWelcome(user: User) {
   await textOwner(user, WELCOME_TEXT + linked).catch((err) => console.error("welcome sms failed", err));
 }
 app.use(connectorRoutes(sendWelcome));
+app.use(workspaceRoutes());
 
 // Plan checkout from the connect window. Stripe Checkout shows Apple Pay on Apple devices.
 app.post("/api/billing/checkout", async (req, res) => {
-  const user = userFromToken(req.body?.t);
-  if (!user) return res.status(401).json({ error: "This link expired. Text CONNECT to get a new one." });
+  const user = whoIs(req);
+  if (!user) return res.status(401).json({ error: "Please sign in again, or text CONNECT for a new link." });
   const plan = String(req.body?.plan ?? "") as keyof typeof billing.PLANS;
   if (!billing.PLANS[plan]) return res.status(400).json({ error: "Pick a plan." });
   user.billing.plan = plan;
   update(user);
   if (!stripeEnabled) return res.json({ url: null, message: "Billing isn't switched on yet. Your free trial is running." });
   try {
-    res.json({ url: await billing.planLink(user, plan, `/connect.html?t=${connectToken(user.phone)}&paid=1`) });
+    const back = req.body?.t ? `/connect.html?t=${connectToken(user.phone)}&paid=1` : "/workspace?paid=1";
+    res.json({ url: await billing.planLink(user, plan, back) });
   } catch (err) {
     console.error("checkout", err);
     res.status(502).json({ error: "Checkout is unavailable right now. Try again in a minute." });
@@ -183,7 +186,9 @@ app.post("/api/verify", async (req, res) => {
   user.verifiedAt ??= Date.now();
   update(user);
   if (isNew) billing.startTrial(user);
+  startSession(res, user);
   res.json({
+    next: isNew ? "/workspace?welcome=1" : "/workspace",
     shareUrl: `${PUBLIC_URL}/?ref=${user.code}`,
     referrals: referralCount(user.code),
     agentNumber: AGENT_NUMBER,
@@ -253,8 +258,12 @@ async function handleOwner(user: User, text: string) {
 
   const g = await billing.gate(user);
   if (!g.ok) return reply(g.message);
-  const answer = await runAgent(text, { kind: "sms", user }, g.model);
+  const pendingBefore = user.pending?.actionId;
+  let answer = await runAgent(text, { kind: "sms", user }, g.model);
   await billing.recordReply(user);
+  // The owner approves the server's exact draft, never the model's paraphrase of it.
+  const p = user.pending;
+  if (p && p.actionId !== pendingBefore) answer = `${answer}\n\n${biz.exactDraft(user, p)}`;
   return reply(g.notice ? `${answer}\n\n${g.notice}` : answer);
 }
 

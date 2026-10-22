@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Workspace · Macoma</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <style>
+    /* Layout: a sticky glass top bar with a menu, one column of sections. Each menu page is a view
+       switched by the URL hash; nothing reloads. */
+    body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--glass-strong); }
+    header.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 8; margin: 0 calc(-1 * max(16px, env(safe-area-inset-left, 0px))); padding: 10px max(16px, env(safe-area-inset-left, 0px)); display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; background: var(--glass-strong); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); border-bottom: 1px solid var(--hairline); }
+    .iconbtn { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
+    .iconbtn svg { width: 22px; height: 22px; }
+    .bar .brand { justify-self: center; display: flex; align-items: center; gap: 8px; font: 700 20px/1 var(--round); text-decoration: none; }
+    main { position: relative; z-index: 1; max-width: 680px; margin: 0 auto; padding-block: 24px 60px; display: grid; gap: 34px; }
+    .view { display: none; gap: 34px; }
+    .view.on { display: grid; }
+    section h2 { font-size: 28px; line-height: 1.1; }
+    section > .sub { color: var(--muted); margin-top: 4px; }
+    .rows { margin-top: 14px; border-top: 1.5px solid var(--ink); }
+    .row { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center; padding: 16px 0; border-bottom: 1px dashed var(--hairline); }
+    .row.noicon { grid-template-columns: 1fr auto; }
+    .row .t { min-width: 0; display: grid; gap: 2px; }
+    .row .name { font-weight: 600; }
+    .row .desc { color: var(--muted); font-size: 15px; overflow-wrap: anywhere; }
+    .row .ok { color: var(--ok); font-size: 14px; }
+    .tile { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font: 700 18px/1 var(--round); color: #fff; }
+    .btn { display: inline-block; font: 600 15px/1 var(--sans); border-radius: 12px; padding: 12px 16px; border: 0; cursor: pointer; text-decoration: none; background: var(--ink); color: var(--ground); white-space: nowrap; }
+    .btn.line { background: transparent; color: var(--ink); border: 1px solid var(--hairline); }
+    .btn.danger { background: transparent; color: var(--err); border: 1px solid color-mix(in srgb, var(--err) 45%, transparent); }
+    .btn:disabled { opacity: .5; cursor: default; }
+    .soon { font-size: 13px; color: var(--muted); text-align: right; max-width: 140px; }
+    .small { display: flex; gap: 6px; }
+    .copy { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--hairline); background: transparent; color: var(--ink); cursor: pointer; }
+    .copy svg { width: 18px; height: 18px; }
+    .banner { border-radius: 24px; padding: 20px; display: grid; gap: 12px; }
+    .banner h2 { font-size: 22px; }
+    .banner p { color: var(--muted); }
+    .flash { padding: 12px 14px; border-radius: 14px; font-size: 14.5px; }
+    .flash.err { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
+    .flash.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+    .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+    .plan { text-align: left; padding: 14px; border-radius: 18px; background: var(--glass-strong); border: 1px solid var(--glass-edge); color: var(--ink); font: inherit; display: grid; gap: 4px; cursor: pointer; }
+    .plan strong { font-size: 15px; }
+    .plan .p { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .plan span { font-size: 12.5px; color: var(--muted); }
+    .plan.current { box-shadow: inset 0 0 0 2px var(--blue); }
+    .usage { margin-top: 12px; font-size: 15px; color: var(--muted); }
+    form.prefs { display: grid; gap: 14px; margin-top: 14px; }
+    form.prefs label { display: grid; gap: 6px; font-weight: 600; font-size: 15px; }
+    form.prefs input, form.prefs select { font: 500 16px/1.2 var(--sans); color: var(--ink); background: var(--glass-strong); border: 1px solid var(--glass-edge); border-radius: 12px; padding: 12px; }
+    form.prefs .hint { font-weight: 400; color: var(--muted); font-size: 13px; }
+    .empty { color: var(--muted); padding: 18px 0; }
+    .kind { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+    /* menu sheet */
+    .menu { position: fixed; inset: 0; z-index: 20; display: none; background: var(--ground); padding: calc(env(safe-area-inset-top, 0px) + 10px) max(16px, env(safe-area-inset-right, 0px)) 32px max(16px, env(safe-area-inset-left, 0px)); }
+    .menu.open { display: grid; grid-template-rows: auto 1fr; }
+    .menu .top { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--hairline); }
+    .menu nav { max-width: 680px; width: 100%; margin: 0 auto; padding-top: 36px; display: grid; align-content: start; gap: 6px; }
+    .menu nav a, .menu nav button { font: 500 24px/1.2 var(--sans); color: var(--ink); text-decoration: none; text-align: left; background: none; border: 0; padding: 12px 0; cursor: pointer; justify-self: start; }
+    .menu nav a.here { text-decoration: underline; text-underline-offset: 6px; }
+    .menu .who { margin-top: 26px; color: var(--muted); font-size: 16px; line-height: 1.6; }
+    @media (max-width: 560px) {
+      .plans { grid-template-columns: 1fr; }
+      .row { grid-template-columns: 40px 1fr; }
+      .row > :last-child { grid-column: 2; justify-self: start; }
+      .row.noicon > :last-child { grid-column: 1; }
+      .soon { text-align: left; max-width: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="fields" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+<header class="bar">
+  <button class="iconbtn" id="openMenu" type="button" aria-label="Open menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  <a class="brand" href="#workspace"><span data-face="biz" data-size="28"></span>Macoma</a>
+  <span></span>
+</header>
+
+<div class="menu" id="menu" role="dialog" aria-modal="true" aria-label="Menu">
+  <div class="top">
+    <button class="iconbtn" id="closeMenu" type="button" aria-label="Close menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <a class="brand" href="#workspace" style="justify-self:center;display:flex;align-items:center;gap:8px;font:700 20px/1 var(--round);text-decoration:none"><span data-face="biz" data-size="28"></span>Macoma</a>
+    <span></span>
+  </div>
+  <nav aria-label="Workspace">
+    <a href="#workspace">Workspace</a>
+    <a href="#vault">Vault</a>
+    <a href="#people">People</a>
+    <a href="#preferences">Preferences</a>
+    <a href="#invite">Invite a friend</a>
+    <button type="button" id="logout">Log out</button>
+    <p class="who"><span id="whoName"></span><br><span id="whoPhone"></span></p>
+  </nav>
+</div>
+
+<main>
+  <div id="flash" hidden></div>
+
+  <!-- Workspace -->
+  <div class="view" id="v-workspace">
+    <div class="banner glass" id="welcome" hidden>
+      <h2>You're in. Two quick things, then we'll text you.</h2>
+      <p>Connect your calendar or Stripe below if you'd like, and pick a plan when you're ready. Your free trial is already running.</p>
+      <div class="small"><button class="btn" id="textMe" type="button">Text me now</button></div>
+    </div>
+
+    <section aria-labelledby="h-contact">
+      <h2 id="h-contact">Contact</h2>
+      <p class="sub">Ways to reach your assistants</p>
+      <div class="rows" id="contactRows"></div>
+    </section>
+
+    <section aria-labelledby="h-plan">
+      <h2 id="h-plan">Plan</h2>
+      <p class="sub">Pay with Apple Pay or a card. Hard allowances, so no surprise bills.</p>
+      <p class="usage" id="usage"></p>
+      <div class="plans" id="plans"></div>
+      <div class="small" style="margin-top:12px"><button class="btn line" id="portal" type="button" hidden>Manage billing</button></div>
+    </section>
+
+    <section aria-labelledby="h-conn">
+      <h2 id="h-conn">Connectors</h2>
+      <p class="sub">Tools your assistants can use</p>
+      <div class="rows" id="connRows"></div>
+    </section>
+
+    <section aria-labelledby="h-priv">
+      <h2 id="h-priv">Data privacy</h2>
+      <p class="sub">Manage data from connected services and your account</p>
+      <div class="rows">
+        <div class="row noicon"><div class="t"><span class="name">External data</span><span class="desc">Disconnect every connected account and delete what Macoma pulled from them.</span></div><button class="btn danger" id="delExternal" type="button">Delete</button></div>
+        <div class="row noicon"><div class="t"><span class="name">Your account</span><span class="desc">Delete your contacts, reminders, invoices and history. Your consent record is kept, as the law requires.</span></div><button class="btn danger" id="delAccount" type="button">Delete</button></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Vault -->
+  <div class="view" id="v-vault">
+    <section aria-labelledby="h-vault">
+      <h2 id="h-vault">Vault</h2>
+      <p class="sub">What your assistants remember about you. Never used to train AI.</p>
+      <div class="rows" id="vaultRows"></div>
+    </section>
+  </div>
+
+  <!-- People -->
+  <div class="view" id="v-people">
+    <section aria-labelledby="h-people">
+      <h2 id="h-people">People</h2>
+      <p class="sub">Customers, leads and suppliers your assistants can text, only after you say YES.</p>
+      <div class="rows" id="peopleRows"></div>
+    </section>
+  </div>
+
+  <!-- Preferences -->
+  <div class="view" id="v-preferences">
+    <section aria-labelledby="h-prefs">
+      <h2 id="h-prefs">Preferences</h2>
+      <p class="sub">How your assistants sign off and when they check in</p>
+      <form class="prefs" id="prefs" novalidate>
+        <label>Your name<input id="p-name" autocomplete="name"></label>
+        <label>Business name<span class="hint">Shown on texts to your customers, e.g. “– Waugh Painting”</span><input id="p-business" autocomplete="organization"></label>
+        <label>Time zone<select id="p-tz"></select></label>
+        <label>Morning brief<select id="p-digest"></select></label>
+        <label>Payment link<span class="hint">Used on invoices if you haven't connected Stripe (Square, PayPal, Venmo…)</span><input id="p-pay" type="url" inputmode="url" placeholder="https://"></label>
+        <div class="small"><button class="btn" type="submit">Save</button></div>
+      </form>
+    </section>
+  </div>
+
+  <!-- Invite -->
+  <div class="view" id="v-invite">
+    <section aria-labelledby="h-invite">
+      <h2 id="h-invite">Invite a friend</h2>
+      <p class="sub">Know another owner who's buried in texts? Share your link.</p>
+      <div class="rows"><div class="row noicon"><div class="t"><span class="name" id="inviteUrl"></span><span class="desc" id="inviteCount"></span></div><div class="small"><button class="copy" id="copyInvite" type="button" aria-label="Copy invite link"></button><button class="btn line" id="shareInvite" type="button" hidden>Share</button></div></div></div>
+    </section>
+  </div>
+</main>
+
+<script src="/faces.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const q = new URLSearchParams(location.search);
+  const COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/></svg>';
+  const COLORS = { google_calendar: "#4285f4", gmail: "#d93025", microsoft: "#0078d4", quickbooks: "#2ca01c", square: "#3e4348", stripe: "#635bff" };
+  const INITIAL = { google_calendar: "C", gmail: "M", microsoft: "O", quickbooks: "Q", square: "S", stripe: "S" };
+  let me = null;
+
+  const flash = (text, kind = "ok") => { const f = $("flash"); f.hidden = !text; f.className = `flash ${kind}`; f.textContent = text || ""; if (text) scrollTo(0, 0); };
+  if (q.get("error")) flash(q.get("error"), "err");
+  else if (q.get("connected")) flash("Connected.");
+  else if (q.get("paid") === "1") flash("Your plan is set up. You won't be charged until the trial ends.");
+  if ([...q.keys()].length) history.replaceState(null, "", location.pathname + location.hash + (q.get("welcome") ? "" : ""));
+
+  async function api(url, body) {
+    const res = await fetch(url, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (res.status === 401) { location.replace("/signin"); throw new Error("Signed out"); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Something went wrong.");
+    return data;
+  }
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const copyBtn = (value, label) => { const b = el("button", "copy"); b.type = "button"; b.setAttribute("aria-label", label); b.innerHTML = COPY; b.addEventListener("click", async () => { try { await navigator.clipboard.writeText(value); flash("Copied."); } catch { flash(value); } }); return b; };
+  const fmtPhone = (p) => /^\+1\d{10}$/.test(p) ? `+1 (${p.slice(2, 5)}) ${p.slice(5, 8)}-${p.slice(8)}` : p;
+
+  function row({ tile, color, name, desc, ok, right }) {
+    const r = el("div", tile ? "row" : "row noicon");
+    if (tile) { const t = el("div", "tile", tile); t.style.background = color; t.setAttribute("aria-hidden", "true"); r.append(t); }
+    const t = el("div", "t");
+    t.append(el("span", "name", name));
+    if (desc) t.append(el("span", "desc", desc));
+    if (ok) t.append(el("span", "ok", ok));
+    r.append(t, right ?? el("span"));
+    return r;
+  }
+
+  function render() {
+    $("whoName").textContent = me.name || "";
+    $("whoPhone").textContent = fmtPhone(me.phone);
+
+    // Contact
+    const c = $("contactRows"); c.replaceChildren();
+    if (me.contact.messages) {
+      const right = el("div", "small");
+      right.append(copyBtn(me.contact.messages, "Copy number"));
+      const a = el("a", "btn line", "Text"); a.href = `sms:${me.contact.messages}`; right.append(a);
+      c.append(row({ tile: "M", color: "#34c759", name: "Messages", desc: fmtPhone(me.contact.messages), right }));
+      const card = el("a", "btn line", "Save"); card.href = me.contact.card;
+      c.append(row({ tile: "+", color: "#8e8e93", name: "Contact card", desc: "Save Macoma so texts show up by name", right: card }));
+    } else {
+      c.append(row({ tile: "M", color: "#34c759", name: "Messages", desc: "Your assistants' number appears here once texting is live." }));
+    }
+    c.append(row({ tile: "W", color: "#25d366", name: "WhatsApp", desc: "Coming later", right: el("span", "soon", "Coming soon") }));
+
+    // Plan
+    $("usage").textContent = me.plan.usage;
+    const pl = $("plans"); pl.replaceChildren();
+    for (const p of me.plan.plans) {
+      const b = el("button", `plan${p.id === me.plan.id && me.plan.status === "active" ? " current" : ""}`);
+      b.type = "button";
+      b.append(el("strong", "", p.name));
+      const price = el("span", "p", `$${p.priceUsd}`); price.append(el("small", "", " /mo")); b.append(price);
+      b.append(el("span", "", `${p.replies} replies${p.customerTexts ? ` · ${p.customerTexts} customer texts` : ""}${p.invoiceFeePct ? ` · ${p.invoiceFeePct}% invoice fee` : ""}`));
+      b.addEventListener("click", async () => {
+        b.disabled = true;
+        try { const r = await api("/api/billing/checkout", { plan: p.id }); if (r.url) location.href = r.url; else { flash(r.message); b.disabled = false; } }
+        catch (e) { flash(e.message, "err"); b.disabled = false; }
+      });
+      pl.append(b);
+    }
+    $("portal").hidden = !(me.plan.status === "active" || me.plan.status === "past_due");
+
+    // Connectors
+    const cr = $("connRows"); cr.replaceChildren();
+    for (const p of me.connectors) {
+      let right;
+      if (p.connected) {
+        right = el("button", "btn line", "Disconnect"); right.type = "button";
+        right.addEventListener("click", async () => { right.disabled = true; try { await api(`/api/connect/${p.id}/disconnect`, {}); await load(); } catch (e) { flash(e.message, "err"); right.disabled = false; } });
+      } else if (p.available) {
+        right = el("a", "btn", "Connect"); right.href = `/connect/${p.id}/start`;
+      } else right = el("span", "soon", p.note || "Coming soon");
+      cr.append(row({ tile: INITIAL[p.id] || p.name[0], color: COLORS[p.id] || "#555", name: p.name, desc: p.blurb, ok: p.connected ? `Connected${p.label ? ` · ${p.label}` : ""}` : "", right }));
+    }
+
+    // Vault
+    const vr = $("vaultRows"); vr.replaceChildren();
+    if (!me.vault.length) vr.append(el("p", "empty", "Nothing saved yet. Text your assistant “remember that…” and it shows up here."));
+    me.vault.forEach((note, i) => {
+      const b = el("button", "btn line", "Forget"); b.type = "button";
+      b.addEventListener("click", async () => { b.disabled = true; try { await api("/api/me/vault/forget", { index: i }); await load(); } catch (e) { flash(e.message, "err"); } });
+      vr.append(row({ name: note, right: b }));
+    });
+
+    // People
+    const pr = $("peopleRows"); pr.replaceChildren();
+    if (!me.people.length) pr.append(el("p", "empty", "No one yet. Text “new customer: Dana Lee, 512-555-0122” and they'll appear here."));
+    for (const p of me.people) {
+      const b = el("button", "btn line", "Remove"); b.type = "button";
+      b.addEventListener("click", async () => { b.disabled = true; try { await api("/api/me/people/remove", { id: p.id }); await load(); } catch (e) { flash(e.message, "err"); } });
+      const r = row({ name: p.name, desc: [p.phone && fmtPhone(p.phone), p.email, p.notes].filter(Boolean).join(" · "), right: b });
+      r.querySelector(".t").prepend(el("span", "kind", p.kind));
+      pr.append(r);
+    }
+
+    // Preferences
+    $("p-name").value = me.preferences.name || "";
+    $("p-business").value = me.preferences.business || "";
+    $("p-pay").value = me.preferences.paymentLink || "";
+    const tz = $("p-tz");
+    if (!tz.options.length) {
+      const zones = Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone").filter((z) => /^(America|Pacific|Europe|Australia|Asia)\//.test(z)) : [me.preferences.timezone];
+      for (const z of zones) tz.append(new Option(z.replace(/_/g, " "), z));
+      const d = $("p-digest");
+      d.append(new Option("Off", ""));
+      for (let h = 5; h <= 11; h++) d.append(new Option(`${h}:00 AM`, String(h)));
+    }
+    if (![...tz.options].some((o) => o.value === me.preferences.timezone)) tz.append(new Option(me.preferences.timezone, me.preferences.timezone));
+    tz.value = me.preferences.timezone;
+    $("p-digest").value = me.preferences.digestHour === null ? "" : String(me.preferences.digestHour);
+
+    // Invite
+    $("inviteUrl").textContent = me.invite.url;
+    $("inviteCount").textContent = me.invite.joined ? `${me.invite.joined} friend${me.invite.joined === 1 ? "" : "s"} joined with your link` : "No one has joined with your link yet";
+    $("copyInvite").innerHTML = COPY;
+    $("shareInvite").hidden = !navigator.share;
+  }
+
+  async function load() { me = await api("/api/me"); render(); }
+
+  // Views
+  const VIEWS = ["workspace", "vault", "people", "preferences", "invite"];
+  function show() {
+    const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "workspace";
+    for (const id of VIEWS) $(`v-${id}`).classList.toggle("on", id === v);
+    document.querySelectorAll(".menu nav a").forEach((a) => a.classList.toggle("here", a.getAttribute("href") === `#${v}`));
+    closeMenu();
+  }
+  const menu = $("menu");
+  const openMenu = () => { menu.classList.add("open"); $("closeMenu").focus(); };
+  function closeMenu() { if (menu.classList.contains("open")) { menu.classList.remove("open"); $("openMenu").focus({ preventScroll: true }); } }
+  $("openMenu").addEventListener("click", openMenu);
+  $("closeMenu").addEventListener("click", closeMenu);
+  menu.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+  addEventListener("hashchange", show);
+  document.querySelectorAll(".menu nav a").forEach((a) => a.addEventListener("click", () => { if (a.getAttribute("href") === location.hash || (!location.hash && a.getAttribute("href") === "#workspace")) closeMenu(); }));
+
+  // Actions
+  if (q.get("welcome")) $("welcome").hidden = false;
+  $("textMe").addEventListener("click", async () => {
+    $("textMe").disabled = true;
+    try { await api("/api/connect/finish", {}); $("welcome").hidden = true; flash("Check your messages. We just texted you."); }
+    catch (e) { flash(e.message, "err"); $("textMe").disabled = false; }
+  });
+  $("portal").addEventListener("click", async () => { try { const r = await api("/api/me/billing-portal", {}); location.href = r.url; } catch (e) { flash(e.message, "err"); } });
+  $("logout").addEventListener("click", async () => { await fetch("/api/logout", { method: "POST" }).catch(() => {}); location.replace("/signin"); });
+
+  // Two-tap confirm in the page itself (no browser dialogs).
+  function confirmTwice(btn, label, run) {
+    let armed = false, t = 0;
+    btn.addEventListener("click", async () => {
+      if (!armed) { armed = true; btn.textContent = label; t = setTimeout(() => { armed = false; btn.textContent = "Delete"; }, 5000); return; }
+      clearTimeout(t); btn.disabled = true;
+      try { await run(); } catch (e) { flash(e.message, "err"); btn.disabled = false; armed = false; btn.textContent = "Delete"; }
+    });
+  }
+  confirmTwice($("delExternal"), "Tap again to delete", async () => { await api("/api/me/external-data/delete", {}); await load(); flash("Disconnected every account and deleted its data."); $("delExternal").disabled = false; $("delExternal").textContent = "Delete"; });
+  confirmTwice($("delAccount"), "Tap again: delete everything", async () => { await api("/api/me/delete-account", { confirm: "DELETE" }); location.replace("/"); });
+
+  $("prefs").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api("/api/me/preferences", { name: $("p-name").value, business: $("p-business").value, timezone: $("p-tz").value, digestHour: $("p-digest").value, paymentLink: $("p-pay").value });
+      await load(); flash("Saved.");
+    } catch (err) { flash(err.message, "err"); }
+  });
+  $("copyInvite").addEventListener("click", async () => { try { await navigator.clipboard.writeText(me.invite.url); flash("Copied."); } catch { flash(me.invite.url); } });
+  $("shareInvite").addEventListener("click", () => navigator.share({ title: "Macoma", text: "The office manager you text. Here's my invite:", url: me.invite.url }).catch(() => {}));
+
+  show();
+  load().catch(() => {});
+})();
+</script>
+</body>
+</html>

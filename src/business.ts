@@ -11,6 +11,7 @@ import {
   type ActionLog,
   type Contact,
   type Invoice,
+  type Pending,
   type Reminder,
   type User,
 } from "./store.js";
@@ -49,6 +50,19 @@ export function propose(user: User, type: PendingType, summary: string, payload:
   user.pending = { actionId: action.id, type, summary, payload, expiresAt: Date.now() + CONFIRM_TTL_MS };
   update(user);
   return action.id;
+}
+
+// The exact words the owner is approving, written by the server rather than the model.
+export function exactDraft(user: User, p: Pending): string {
+  if (p.type === "message_contact") {
+    const c = user.contacts.find((x) => x.id === p.payload.contactId);
+    return `To ${c?.name ?? "contact"}, exactly:\n"${p.payload.text}"\nReply YES to send or NO to cancel.`;
+  }
+  if (p.type === "send_invoice") {
+    const inv = user.invoices.find((i) => i.id === p.payload.invoiceId);
+    return inv ? `${invoiceText(user, inv)}\nReply YES to send it or NO to cancel.` : "Reply YES to send or NO to cancel.";
+  }
+  return `${p.summary}. Reply YES to confirm or NO to cancel.`;
 }
 
 export function cancelPending(user: User): string | null {
