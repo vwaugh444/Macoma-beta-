@@ -13,7 +13,35 @@ import * as biz from "./business.js";
 import * as billing from "./billing.js";
 import { agenda, connectUrl, connectedSummary } from "./connectors.js";
 
-const client = new Anthropic();
+// Retries ride out 429s and overloads with backoff; the gate below caps how many model
+// calls one process runs at once, so a burst of texts queues here instead of tripping limits.
+const client = new Anthropic({ maxRetries: Number(process.env.ANTHROPIC_MAX_RETRIES ?? 4) });
+// AI_MOCK=1 answers without calling the API, for load tests (scripts/load-test.ts).
+type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
+const create = async (params: CreateParams): Promise<Anthropic.Beta.Messages.BetaMessage> => {
+  if (process.env.AI_MOCK !== "1") return client.beta.messages.create(params);
+  await new Promise((r) => setTimeout(r, Number(process.env.AI_MOCK_MS ?? 800)));
+  return {
+    model: params.model,
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: "Got it. (mock reply)" }],
+    usage: { input_tokens: 2500, output_tokens: 120, cache_read_input_tokens: 6000, cache_creation_input_tokens: 0 },
+  } as unknown as Anthropic.Beta.Messages.BetaMessage;
+};
+const AI_CONCURRENCY = Number(process.env.AI_CONCURRENCY ?? 16);
+let aiRunning = 0;
+const aiWaiting: (() => void)[] = [];
+async function aiSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (aiRunning >= AI_CONCURRENCY) await new Promise<void>((r) => aiWaiting.push(r));
+  else aiRunning++;
+  try {
+    return await fn();
+  } finally {
+    const next = aiWaiting.shift();
+    if (next) next(); // hand the slot straight to the next caller
+    else aiRunning--;
+  }
+}
 const EFFORT = (process.env.AGENT_EFFORT ?? "medium") as "low" | "medium" | "high";
 const MAX_PER_CALL = Number(process.env.MAX_SPEND_PER_CALL_USD ?? "0.10");
 const DAILY_BUDGET = Number(process.env.DAILY_BUDGET_USD ?? "1.00");
@@ -240,7 +268,7 @@ async function runTool(name: string, input: any, caller: Caller): Promise<string
     case "list_contacts":
       return biz.describeContacts(user, input.kind);
     case "message_contact":
-      return biz.draftContactMessage(user, input.contact, input.text);
+      return await biz.draftContactMessage(user, input.contact, input.text);
     case "set_reminder": {
       const contactId = input.contact ? biz.findContact(user, input.contact).id : null;
       const r = biz.addReminder(user, {
@@ -295,7 +323,7 @@ async function runTool(name: string, input: any, caller: Caller): Promise<string
     case "plan_status":
       return billing.describeUsage(user);
     case "share_link":
-      return `${PUBLIC_URL}/?ref=${user.code} (${referralCount(user.code)} friends joined so far)`;
+      return `${PUBLIC_URL}/?ref=${user.code} (${await referralCount(user.code)} friends joined so far)`;
     default:
       throw new Error(`Unknown tool ${name}`);
   }
@@ -325,7 +353,7 @@ export async function runAgent(text: string, caller: Caller, model = billing.DEF
 
   let reply = "";
   for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await client.beta.messages.create({
+    const res = await aiSlot(() => create({
       model,
       max_tokens: 16000,
       thinking: { type: "adaptive" },
@@ -339,7 +367,7 @@ export async function runAgent(text: string, caller: Caller, model = billing.DEF
       ],
       tools: tools(caller),
       messages,
-    });
+    }));
 
     if (caller.kind === "sms") billing.recordModelCall(caller.user, res.model, res.usage);
 

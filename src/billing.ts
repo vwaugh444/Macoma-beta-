@@ -5,7 +5,7 @@
 // line the agent switches to a cheaper model; at the allowance it pauses and offers
 // a reply pack. Nothing is billed as overage without the owner saying yes.
 import { stripe, type Stripe } from "./stripeClient.js";
-import { findUser, newUsage, update, type PlanId, type User } from "./store.js";
+import { getUser, newUsage, update, userByStripe, type PlanId, type User } from "./store.js";
 
 const env = process.env;
 const PUBLIC_URL = (env.PUBLIC_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -364,7 +364,7 @@ export async function handleBillingEvent(event: Stripe.Event): Promise<string | 
   switch (event.type) {
     case "checkout.session.completed": {
       const s = event.data.object as Stripe.Checkout.Session;
-      const user = s.metadata?.phone ? findUser((u) => u.phone === s.metadata!.phone) : undefined;
+      const user = s.metadata?.phone ? await getUser(s.metadata.phone) : undefined;
       if (!user) return null;
       if (typeof s.customer === "string") user.billing.stripeCustomerId = s.customer;
       if (s.metadata?.kind === "pack") {
@@ -385,9 +385,7 @@ export async function handleBillingEvent(event: Stripe.Event): Promise<string | 
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
       const sub = event.data.object as Stripe.Subscription;
-      const user = sub.metadata?.phone
-        ? findUser((u) => u.phone === sub.metadata.phone)
-        : findUser((u) => u.billing.stripeSubscriptionId === sub.id);
+      const user = sub.metadata?.phone ? await getUser(sub.metadata.phone) : await userByStripe({ subscription: sub.id });
       if (!user) return null;
       const before = user.billing.status;
       user.billing.stripeSubscriptionId = sub.id;
@@ -406,9 +404,9 @@ export async function handleBillingEvent(event: Stripe.Event): Promise<string | 
   }
 }
 
-export const billingOwnerFor = (event: Stripe.Event): User | undefined => {
+export async function billingOwnerFor(event: Stripe.Event): Promise<User | undefined> {
   const obj = event.data.object as { metadata?: Record<string, string> | null; customer?: unknown };
-  if (obj.metadata?.phone) return findUser((u) => u.phone === obj.metadata!.phone);
-  if (typeof obj.customer === "string") return findUser((u) => u.billing.stripeCustomerId === obj.customer);
+  if (obj.metadata?.phone) return getUser(obj.metadata.phone);
+  if (typeof obj.customer === "string") return userByStripe({ customer: obj.customer });
   return undefined;
-};
+}

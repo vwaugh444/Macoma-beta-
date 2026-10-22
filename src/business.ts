@@ -74,7 +74,7 @@ export function cancelPending(user: User): string | null {
 }
 
 // Runs the pending action. Returns the text to send back to the owner.
-export async function confirmPending(user: User, onDeleteAccount: () => void): Promise<string> {
+export async function confirmPending(user: User, onDeleteAccount: () => Promise<void> | void): Promise<string> {
   const p = user.pending;
   if (!p) return "Nothing is waiting for a yes right now.";
   user.pending = null;
@@ -94,7 +94,7 @@ export async function confirmPending(user: User, onDeleteAccount: () => void): P
         break;
       case "delete_account":
         setActionStatus(user, p.actionId, "done");
-        onDeleteAccount();
+        await onDeleteAccount();
         return "Done. Your account and data are deleted. Text this number again any time to start over.";
       default:
         throw new Error(`Unknown action ${p.type}`);
@@ -168,10 +168,10 @@ function signature(user: User) {
   return user.settings.business ?? user.settings.name ?? "your contact";
 }
 
-export function draftContactMessage(user: User, contactRef: string, text: string): string {
+export async function draftContactMessage(user: User, contactRef: string, text: string): Promise<string> {
   const c = findContact(user, contactRef);
   if (!c.phone) throw new Error(`${c.name} has no phone number on file.`);
-  if (isDoNotText(c.phone)) throw new Error(`${c.name} has opted out of texts. Reach them another way.`);
+  if (await isDoNotText(c.phone)) throw new Error(`${c.name} has opted out of texts. Reach them another way.`);
   if (inQuietHours(user)) throw new Error("It's outside 8am–9pm. Set a reminder to send it in the morning instead.");
   const limit = billing.canTextCustomer(user);
   if (limit) throw new Error(limit);
@@ -183,7 +183,7 @@ export function draftContactMessage(user: User, contactRef: string, text: string
 async function deliverToContact(user: User, contactId: string, body: string): Promise<string> {
   const c = user.contacts.find((x) => x.id === contactId);
   if (!c?.phone) throw new Error("contact has no phone");
-  if (isDoNotText(c.phone)) throw new Error(`${c.name} has opted out of texts`);
+  if (await isDoNotText(c.phone)) throw new Error(`${c.name} has opted out of texts`);
   // First-ever message to this number carries opt-out instructions.
   const first = !c.lastOutboundAt;
   const text = first ? `${body}\nReply STOP to opt out.` : body;
@@ -346,7 +346,7 @@ async function deliverInvoice(user: User, invoiceId: string): Promise<string> {
     inv.payUrl = user.settings.paymentLink;
   }
 
-  if (c.phone && !isDoNotText(c.phone)) {
+  if (c.phone && !(await isDoNotText(c.phone))) {
     const first = !c.lastOutboundAt;
     const text = `Hi ${c.name.split(" ")[0]}, here's invoice ${inv.number} from ${signature(user)} for $${inv.total.toFixed(2)}, due ${fmtDate(
       user,
@@ -376,14 +376,15 @@ export function markInvoicePaid(user: User, invoiceId: string, via = "owner"): I
   inv.paidAt = Date.now();
   for (const r of user.reminders) if (r.kind === "invoice_chase" && r.text.startsWith(inv.number)) r.done = true;
   logAction(user, { type: "invoice_paid", summary: `${inv.number} marked paid (${via})`, status: "done" });
+  update(user);
   return inv;
 }
 
 // Events from owners' connected Stripe accounts (the Connect webhook endpoint).
-export async function handleConnectEvent(event: Stripe.Event, findOwner: (phone: string) => User | undefined) {
+export async function handleConnectEvent(event: Stripe.Event, findOwner: (phone: string) => Promise<User | undefined>) {
   if (event.type !== "invoice.paid") return;
   const si = event.data.object as Stripe.Invoice;
-  const owner = si.metadata?.owner ? findOwner(si.metadata.owner) : undefined;
+  const owner = si.metadata?.owner ? await findOwner(si.metadata.owner) : undefined;
   // Only trust an invoice that came from the account this owner connected.
   if (!owner || !si.metadata?.invoiceId || owner.billing.connectAccountId !== event.account) return;
   const inv = markInvoicePaid(owner, si.metadata.invoiceId, "stripe");

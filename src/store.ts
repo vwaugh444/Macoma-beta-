@@ -1,7 +1,14 @@
-// Tiny JSON-file store. Good enough for a demo; swap for Postgres in prod.
+// Account storage on Postgres (see db.ts). Each owner is one JSON document plus indexed
+// columns for the lookups the system needs at scale. Work happens in units (one inbound
+// text, one web request, one reminder tick): users loaded in a unit are cached in it,
+// `update(user)` marks them dirty, and the unit saves them at the end. Saves use an
+// optimistic version check; on a clash, only the fields this unit changed are applied
+// on top of the newer copy, so a workspace edit and an agent reply never undo each other.
+import { AsyncLocalStorage } from "node:async_hooks";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
+import { db } from "./db.js";
 
 export type Turn = { role: "user" | "assistant"; text: string; at: number };
 
@@ -139,18 +146,6 @@ export type User = {
   pending: Pending | null;
 };
 
-type DB = {
-  users: Record<string, User>;
-  codes: Record<string, string>;
-  // Third parties (customers/leads) who texted STOP to us. Never text them again.
-  doNotText: Record<string, number>;
-  // Consent records outlive deleted accounts.
-  consentLog: (Consent & { phone: string })[];
-};
-
-const DATA_DIR = process.env.DATA_DIR ?? "data";
-const FILE = path.join(DATA_DIR, "db.json");
-
 export const newBilling = (): Billing => ({
   plan: "business",
   status: "none",
@@ -178,58 +173,188 @@ export const newUsage = (month: string, trialReplies = 0): Usage => ({
   trialReplies,
 });
 
-let db: DB = { users: {}, codes: {}, doNotText: {}, consentLog: [] };
-try {
-  db = { ...db, ...JSON.parse(fs.readFileSync(FILE, "utf8")) };
-  // Records written before billing and connectors existed.
-  for (const u of Object.values(db.users)) {
-    u.billing = { ...newBilling(), ...(u.billing ?? {}) };
-    u.usage ??= newUsage(today());
-    u.connections ??= {};
-    u.verifiedAt ??= u.consent?.at ?? null;
-    u.welcomeSentAt ??= u.status === "active" ? u.createdAt : null;
-  }
-} catch {
-  // first run
+export const id = (prefix: string) => `${prefix}_${crypto.randomBytes(4).toString("hex")}`;
+
+export function today(tz?: string) {
+  return new Date().toLocaleDateString("en-CA", tz ? { timeZone: tz } : undefined); // YYYY-MM-DD
 }
 
-let writing = Promise.resolve();
-function persist() {
-  const snapshot = JSON.stringify(db, null, 2);
-  writing = writing.then(async () => {
-    await fs.promises.mkdir(DATA_DIR, { recursive: true });
-    await fs.promises.writeFile(FILE + ".tmp", snapshot);
-    await fs.promises.rename(FILE + ".tmp", FILE);
+// Fills fields added after a record was first written.
+function normalize(u: User): User {
+  u.billing = { ...newBilling(), ...(u.billing ?? {}) };
+  u.usage ??= newUsage(today());
+  u.connections ??= {};
+  // Only for records written before these fields existed; null is a real value.
+  if (u.verifiedAt === undefined) u.verifiedAt = u.consent?.at ?? null;
+  if (u.welcomeSentAt === undefined) u.welcomeSentAt = u.status === "active" ? u.createdAt : null;
+  return u;
+}
+
+// --- units of work -------------------------------------------------------------------------
+
+type Unit = { cache: Map<string, User>; dirty: Set<User> };
+const unit = new AsyncLocalStorage<Unit>();
+const meta = new WeakMap<User, { version: number; base: User }>();
+
+export async function unitOfWork<T>(fn: () => Promise<T>): Promise<T> {
+  const u: Unit = { cache: new Map(), dirty: new Set() };
+  return unit.run(u, async () => {
+    try {
+      return await fn();
+    } finally {
+      await flush();
+    }
   });
 }
 
-export const id = (prefix: string) => `${prefix}_${crypto.randomBytes(4).toString("hex")}`;
+// Runs fn inside a fresh unit without saving at the end; the caller calls flush(). Used by
+// the web middleware so saves land before the response is sent.
+export function withUnit<T>(fn: () => T): T {
+  return unit.run({ cache: new Map(), dirty: new Set() }, fn);
+}
+
+// Saves everything the current unit changed. Safe to call more than once.
+export async function flush() {
+  const u = unit.getStore();
+  if (!u) return;
+  const users = [...u.dirty];
+  u.dirty.clear();
+  for (const user of users) await save(user);
+}
+
+export function update(user: User) {
+  const u = unit.getStore();
+  if (u) u.dirty.add(user);
+  else void save(user).catch((err) => console.error("save failed", err));
+}
+
+// The scheduler sets this: when is the next thing due for this owner (ms), or null.
+let dueAt: (u: User) => number | null = () => null;
+export function setDueIndexer(fn: (u: User) => number | null) {
+  dueAt = fn;
+}
+
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+function track(user: User, version: number) {
+  meta.set(user, { version, base: clone(user) });
+  unit.getStore()?.cache.set(user.phone, user);
+  return user;
+}
+
+export async function getUser(phone: string): Promise<User | undefined> {
+  const cached = unit.getStore()?.cache.get(phone);
+  if (cached) return cached;
+  const { rows } = await (await db()).query("SELECT doc, version FROM users WHERE phone = $1", [phone]);
+  if (!rows[0]) return undefined;
+  return track(normalize(rows[0].doc), rows[0].version);
+}
+
+// --- merging after a version clash ------------------------------------------------------------
+
+type WithId = { id: string };
+function mergeById<T extends WithId>(fresh: T[], mine: T[], base: T[]): T[] {
+  const b = new Map(base.map((x) => [x.id, x]));
+  const m = new Map(mine.map((x) => [x.id, x]));
+  const out = new Map(fresh.map((x) => [x.id, x]));
+  for (const x of mine) if (!b.has(x.id) || !same(x, b.get(x.id))) out.set(x.id, x); // added or edited here
+  for (const x of base) if (!m.has(x.id)) out.delete(x.id); // removed here
+  return [...out.values()];
+}
+
+function mergeList<T>(fresh: T[], mine: T[], base: T[]): T[] {
+  const key = (x: T) => JSON.stringify(x);
+  const removed = new Set(base.filter((x) => !mine.some((y) => key(y) === key(x))).map(key));
+  const added = mine.filter((x) => !base.some((y) => key(y) === key(x)));
+  return [...fresh.filter((x) => !removed.has(key(x))), ...added];
+}
+
+const BY_ID = new Set(["contacts", "reminders", "invoices", "actions"]);
+const BY_FIELD = new Set(["billing", "settings", "usage", "connections"]);
+
+function merge(fresh: User, mine: User, base: User): User {
+  const out: any = fresh;
+  const m: any = mine;
+  const b: any = base;
+  for (const k of new Set([...Object.keys(m), ...Object.keys(b)])) {
+    if (same(m[k], b[k])) continue; // this unit didn't touch it
+    if (BY_ID.has(k)) out[k] = mergeById(out[k] ?? [], m[k] ?? [], b[k] ?? []);
+    else if (k === "notes" || k === "history") out[k] = mergeList(out[k] ?? [], m[k] ?? [], b[k] ?? []);
+    else if (BY_FIELD.has(k) && m[k] && b[k]) {
+      out[k] = { ...(out[k] ?? {}) };
+      for (const f of new Set([...Object.keys(m[k]), ...Object.keys(b[k])])) {
+        if (same(m[k][f], b[k][f])) continue;
+        if (m[k][f] === undefined) delete out[k][f];
+        else out[k][f] = m[k][f];
+      }
+    } else out[k] = m[k];
+  }
+  return out;
+}
+
+// --- saving -------------------------------------------------------------------------------------
+
+async function save(user: User): Promise<void> {
+  const d = await db();
+  let info = meta.get(user);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const next = dueAt(user);
+    const r = await d.query(
+      `UPDATE users SET doc = $2, version = version + 1, code = $3, referred_by = $4, status = $5,
+         stripe_customer = $6, stripe_subscription = $7, connect_account = $8, next_due_at = $9, updated_at = now()
+       WHERE phone = $1 AND version = $10 RETURNING version`,
+      [
+        user.phone,
+        JSON.stringify(user),
+        user.code,
+        user.referredBy,
+        user.status,
+        user.billing.stripeCustomerId,
+        user.billing.stripeSubscriptionId,
+        user.billing.connectAccountId,
+        next ? new Date(next) : null,
+        info?.version ?? 0,
+      ],
+    );
+    if (r.rowCount) {
+      await indexContacts(user, info?.base);
+      track(user, r.rows[0].version);
+      return;
+    }
+    // Someone saved first. Re-apply only what this unit changed on top of their copy.
+    const { rows } = await d.query("SELECT doc, version FROM users WHERE phone = $1", [user.phone]);
+    if (!rows[0]) return; // deleted meanwhile
+    const merged = merge(normalize(rows[0].doc), user, info?.base ?? normalize(clone(rows[0].doc)));
+    for (const k of Object.keys(user)) delete (user as any)[k];
+    Object.assign(user, merged);
+    info = { version: rows[0].version, base: info?.base ?? clone(user) };
+  }
+  throw new Error(`could not save ${user.phone} after repeated conflicts`);
+}
+
+async function indexContacts(user: User, base?: User) {
+  const d = await db();
+  for (const c of user.contacts) {
+    if (!c.phone || !c.lastOutboundAt) continue;
+    const before = base?.contacts.find((x) => x.id === c.id);
+    if (before?.lastOutboundAt === c.lastOutboundAt && before?.phone === c.phone) continue;
+    await d.query(
+      `INSERT INTO contact_index (contact_phone, owner_phone, last_outbound_at) VALUES ($1, $2, $3)
+       ON CONFLICT (contact_phone, owner_phone) DO UPDATE SET last_outbound_at = EXCLUDED.last_outbound_at`,
+      [c.phone, user.phone, new Date(c.lastOutboundAt)],
+    );
+  }
+}
+
+// --- accounts -----------------------------------------------------------------------------------
 
 function newCode(): string {
-  let code: string;
-  do code = crypto.randomBytes(4).toString("base64url").slice(0, 6);
-  while (db.codes[code]);
-  return code;
+  return crypto.randomBytes(5).toString("base64url").slice(0, 7);
 }
 
-export function getUser(phone: string): User | undefined {
-  return db.users[phone];
-}
-
-export function allUsers(): User[] {
-  return Object.values(db.users);
-}
-
-export function findUser(match: (u: User) => boolean): User | undefined {
-  return Object.values(db.users).find(match);
-}
-
-export function phoneForCode(code: string): string | undefined {
-  return db.codes[code];
-}
-
-export function createUser(phone: string, referredBy: string | null): User {
-  const existing = db.users[phone];
+export async function createUser(phone: string, referredBy: string | null): Promise<User> {
+  const existing = await getUser(phone);
   if (existing) return existing;
   const user: User = {
     phone,
@@ -264,58 +389,121 @@ export function createUser(phone: string, referredBy: string | null): User {
     actions: [],
     pending: null,
   };
-  db.users[phone] = user;
-  db.codes[user.code] = phone;
-  persist();
-  return user;
-}
-
-export function recordConsent(user: User, consent: Consent) {
-  user.consent = consent;
-  db.consentLog.push({ ...consent, phone: user.phone });
-  update(user);
-}
-
-// Removes everything except the consent log entry.
-export function deleteUser(phone: string) {
-  const u = db.users[phone];
-  if (!u) return;
-  delete db.codes[u.code];
-  delete db.users[phone];
-  persist();
-}
-
-export function referralCount(code: string): number {
-  return Object.values(db.users).filter((u) => u.referredBy === code).length;
-}
-
-// Which owner, if any, recently texted this number on their behalf.
-export function ownerForContactPhone(phone: string): { owner: User; contact: Contact } | undefined {
-  let best: { owner: User; contact: Contact } | undefined;
-  for (const owner of Object.values(db.users)) {
-    for (const contact of owner.contacts) {
-      if (contact.phone !== phone || !contact.lastOutboundAt) continue;
-      if (!best || contact.lastOutboundAt > (best.contact.lastOutboundAt ?? 0)) best = { owner, contact };
+  const d = await db();
+  for (let i = 0; i < 5; i++) {
+    try {
+      await d.query(
+        "INSERT INTO users (phone, doc, version, code, referred_by, status) VALUES ($1, $2, 0, $3, $4, $5) ON CONFLICT (phone) DO NOTHING",
+        [phone, JSON.stringify(user), user.code, referredBy, user.status],
+      );
+      break;
+    } catch (err) {
+      if (!/code/.test(String((err as Error).message))) throw err;
+      user.code = newCode(); // referral code collision; try another
     }
   }
-  return best;
+  return (await getUser(phone))!;
 }
 
-export function isDoNotText(phone: string) {
-  return Boolean(db.doNotText[phone]);
+export async function recordConsent(user: User, consent: Consent) {
+  user.consent = consent;
+  update(user);
+  await (await db()).query("INSERT INTO consent_log (phone, at, via, terms_version, ip) VALUES ($1, $2, $3, $4, $5)", [
+    user.phone,
+    new Date(consent.at),
+    consent.via,
+    consent.termsVersion,
+    consent.ip,
+  ]);
 }
 
-export function setDoNotText(phone: string, on: boolean) {
-  if (on) db.doNotText[phone] = Date.now();
-  else delete db.doNotText[phone];
-  persist();
+// Removes the account and its routing rows. The consent log stays.
+export async function deleteUser(phone: string) {
+  const d = await db();
+  await d.query("DELETE FROM users WHERE phone = $1", [phone]);
+  await d.query("DELETE FROM contact_index WHERE owner_phone = $1", [phone]);
+  const u = unit.getStore();
+  if (u) {
+    const cached = u.cache.get(phone);
+    if (cached) u.dirty.delete(cached);
+    u.cache.delete(phone);
+  }
 }
 
-export function update(user: User) {
-  if (db.users[user.phone]) db.users[user.phone] = user;
-  persist();
+export async function phoneForCode(code: string): Promise<string | undefined> {
+  const { rows } = await (await db()).query("SELECT phone FROM users WHERE code = $1", [code]);
+  return rows[0]?.phone;
 }
 
-export function today(tz?: string) {
-  return new Date().toLocaleDateString("en-CA", tz ? { timeZone: tz } : undefined); // YYYY-MM-DD
+export async function referralCount(code: string): Promise<number> {
+  const { rows } = await (await db()).query("SELECT count(*)::int AS n FROM users WHERE referred_by = $1", [code]);
+  return rows[0]?.n ?? 0;
+}
+
+export async function userByStripe(q: { customer?: string | null; subscription?: string | null }): Promise<User | undefined> {
+  const d = await db();
+  const col = q.subscription ? "stripe_subscription" : "stripe_customer";
+  const val = q.subscription ?? q.customer;
+  if (!val) return undefined;
+  const { rows } = await d.query(`SELECT phone FROM users WHERE ${col} = $1 LIMIT 1`, [val]);
+  return rows[0] ? getUser(rows[0].phone) : undefined;
+}
+
+// Which owner, if any, most recently texted this number on their behalf.
+export async function ownerForContactPhone(phone: string): Promise<{ owner: User; contact: Contact } | undefined> {
+  const { rows } = await (await db()).query(
+    "SELECT owner_phone FROM contact_index WHERE contact_phone = $1 ORDER BY last_outbound_at DESC LIMIT 5",
+    [phone],
+  );
+  for (const r of rows) {
+    const owner = await getUser(r.owner_phone);
+    const contact = owner?.contacts.find((c) => c.phone === phone && c.lastOutboundAt);
+    if (owner && contact) return { owner, contact };
+  }
+  return undefined;
+}
+
+// Third parties (customers/leads) who texted STOP to us. Never text them again.
+export async function isDoNotText(phone: string): Promise<boolean> {
+  const { rows } = await (await db()).query("SELECT 1 FROM do_not_text WHERE phone = $1", [phone]);
+  return rows.length > 0;
+}
+
+export async function setDoNotText(phone: string, on: boolean) {
+  const d = await db();
+  if (on) await d.query("INSERT INTO do_not_text (phone) VALUES ($1) ON CONFLICT DO NOTHING", [phone]);
+  else await d.query("DELETE FROM do_not_text WHERE phone = $1", [phone]);
+}
+
+// Owners with something due now (reminders, briefs, trial notices, welcome texts).
+export async function duePhones(limit = 500): Promise<{ phone: string; due: number }[]> {
+  const { rows } = await (await db()).query(
+    "SELECT phone, next_due_at FROM users WHERE next_due_at <= now() ORDER BY next_due_at LIMIT $1",
+    [limit],
+  );
+  return rows.map((r) => ({ phone: r.phone, due: new Date(r.next_due_at).getTime() }));
+}
+
+// One-time import of the old JSON-file store, if it exists and the database is empty.
+export async function importLegacyStore() {
+  const file = path.join(process.env.DATA_DIR ?? "data", "db.json");
+  if (!fs.existsSync(file)) return;
+  const d = await db();
+  const { rows } = await d.query("SELECT count(*)::int AS n FROM users");
+  if (rows[0].n > 0) return;
+  const old = JSON.parse(fs.readFileSync(file, "utf8"));
+  for (const u of Object.values<User>(old.users ?? {})) {
+    await d.query("INSERT INTO users (phone, doc, code, referred_by, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING", [
+      u.phone,
+      JSON.stringify(normalize(u)),
+      u.code,
+      u.referredBy,
+      u.status,
+    ]);
+  }
+  for (const phone of Object.keys(old.doNotText ?? {})) await setDoNotText(phone, true);
+  for (const c of old.consentLog ?? [])
+    await d.query("INSERT INTO consent_log (phone, at, via, terms_version, ip) VALUES ($1, $2, $3, $4, $5)", [c.phone, new Date(c.at), c.via, c.termsVersion, c.ip]);
+  fs.renameSync(file, `${file}.imported`);
+  console.log(`Imported ${Object.keys(old.users ?? {}).length} accounts from ${file}`);
 }

@@ -63,13 +63,13 @@ const zoneFor = (night: boolean) => ZONES.find((z) => (night ? hourIn(z) >= 22 |
 let n = 0;
 async function run(s: Scenario) {
   const phone = `+1999555${String(1000 + n++).padStart(4, "0")}`;
-  const user = store.createUser(phone, null);
+  const user = await store.createUser(phone, null);
   user.status = "active";
   billing.startTrial(user);
   const tz = s.setup.profile?.timezone && !s.night ? s.setup.profile.timezone : zoneFor(Boolean(s.night));
   Object.assign(user.settings, { timezone: tz, name: s.setup.profile?.name ?? null, business: s.setup.profile?.business ?? null, paymentLink: s.setup.profile?.paymentLink ?? null });
   for (const c of s.setup.contacts ?? []) biz.upsertContact(user, c);
-  for (const p of s.setup.doNotText ?? []) store.setDoNotText(p, true);
+  for (const p of s.setup.doNotText ?? []) await store.setDoNotText(p, true);
   for (const r of s.setup.reminders ?? []) biz.addReminder(user, { kind: r.kind, text: r.text, dueAt: Date.now() + r.inHours * 3_600_000 });
   for (const i of s.setup.invoices ?? []) {
     const inv = biz.createInvoice(user, i.contact, [{ description: i.description, quantity: 1, unitPrice: i.amount }], 7);
@@ -84,7 +84,7 @@ async function run(s: Scenario) {
     const word = turn.owner.trim().toUpperCase();
     let reply: string;
     if (s.caller === "a2a") reply = await runAgent(turn.owner, { kind: "a2a", contextId: `eval-${s.id}` });
-    else if (["YES", "Y", "SEND", "CONFIRM", "OK"].includes(word)) reply = user.pending ? await biz.confirmPending(user, () => {}) : "Nothing is waiting for a yes right now.";
+    else if (["YES", "Y", "SEND", "CONFIRM", "AGREE"].includes(word)) reply = user.pending ? await biz.confirmPending(user, () => {}) : "Nothing is waiting for a yes right now.";
     else if (["NO", "N", "NEVERMIND"].includes(word)) reply = biz.cancelPending(user) ? "Cancelled." : "Nothing to cancel.";
     else {
       const g = await billing.gate(user);
@@ -134,7 +134,7 @@ let failed = 0;
 let total = 0;
 for (const s of scenarios) {
   try {
-    const { failures, cost } = await run(s);
+    const { failures, cost } = await store.unitOfWork(() => run(s));
     total += cost;
     console.log(`${failures.length ? "FAIL" : "pass"}  ${s.id.padEnd(26)} $${cost.toFixed(3)}  ${s.about}`);
     for (const f of failures) console.log(`        - ${f}`);

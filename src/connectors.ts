@@ -6,11 +6,12 @@
 // seals the tokens with AES-256-GCM and sends the owner back to the connect page.
 //
 // Production notes: keep TOKEN_ENCRYPTION_KEY in a secrets manager (or swap seal/open
-// for KMS envelope encryption), and move `states` to Redis/Postgres when running
-// more than one server.
+// for KMS envelope encryption). OAuth states live in Postgres so any server can finish
+// a connection another one started.
 import crypto from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { stripe } from "./stripeClient.js";
+import { db } from "./db.js";
 import { getUser, update, type Connection, type User } from "./store.js";
 
 const env = process.env;
@@ -60,7 +61,7 @@ function signToken(purpose: "connect" | "session", user: Pick<User, "phone" | "s
   return `${payload}.${sig}`;
 }
 
-function readToken(purpose: "connect" | "session", token: unknown): User | null {
+async function readToken(purpose: "connect" | "session", token: unknown): Promise<User | null> {
   if (typeof token !== "string" || !token.includes(".")) return null;
   const [payload, sig] = token.split(".");
   const expected = crypto.createHmac("sha256", SIGNING_KEY).update(payload).digest();
@@ -69,7 +70,7 @@ function readToken(purpose: "connect" | "session", token: unknown): User | null 
   try {
     const { p, e, u = "connect", v = 0 } = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     if (u !== purpose || typeof e !== "number" || Date.now() > e) return null;
-    const user = getUser(p);
+    const user = await getUser(p);
     if (!user || user.status !== "active") return null;
     if (purpose === "session" && v !== (user.sessionVersion ?? 0)) return null;
     return user;
@@ -78,7 +79,7 @@ function readToken(purpose: "connect" | "session", token: unknown): User | null 
   }
 }
 
-export const connectToken = (phone: string) => signToken("connect", getUser(phone) ?? { phone, sessionVersion: 0 }, TOKEN_TTL_MS);
+export const connectToken = (user: Pick<User, "phone" | "sessionVersion">) => signToken("connect", user, TOKEN_TTL_MS);
 export const userFromToken = (token: unknown) => readToken("connect", token);
 
 function cookieValue(req: Request, name: string): string | undefined {
@@ -111,9 +112,9 @@ export function endSessions(res: Response, user: User | null) {
 }
 
 // Either a texted connect link (?t=) or the signed-in session.
-export const whoIs = (req: Request): User | null => userFromToken(req.query.t ?? req.body?.t) ?? userFromSession(req);
+export const whoIs = async (req: Request): Promise<User | null> => (await userFromToken(req.query.t ?? req.body?.t)) ?? (await userFromSession(req));
 
-export const connectUrl = (user: User) => `${PUBLIC_URL}/connect.html?t=${connectToken(user.phone)}`;
+export const connectUrl = (user: User) => `${PUBLIC_URL}/connect.html?t=${connectToken(user)}`;
 
 // --- providers --------------------------------------------------------------------------
 
@@ -233,14 +234,27 @@ type Tokens = { access_token: string; refresh_token?: string; expires_in?: numbe
 
 // --- OAuth ------------------------------------------------------------------------------
 
-const states = new Map<string, { phone: string; provider: string; verifier: string; exp: number; back: "connect" | "workspace" }>();
+type OAuthState = { phone: string; provider: string; verifier: string; back: "connect" | "workspace" };
 const b64url = (b: Buffer) => b.toString("base64url");
 
-function startUrl(p: Provider, user: User, back: "connect" | "workspace"): string {
-  for (const [k, v] of states) if (v.exp < Date.now()) states.delete(k);
+async function peekState(state: string): Promise<OAuthState | undefined> {
+  const { rows } = await (await db()).query("SELECT doc FROM oauth_states WHERE state = $1 AND expires_at > now()", [state]);
+  return rows[0]?.doc;
+}
+
+// One use only: deleting returns the row, so two callbacks with the same state can't both win.
+async function takeState(state: string): Promise<OAuthState | undefined> {
+  const { rows } = await (await db()).query("DELETE FROM oauth_states WHERE state = $1 RETURNING doc, expires_at", [state]);
+  return rows[0] && new Date(rows[0].expires_at).getTime() > Date.now() ? rows[0].doc : undefined;
+}
+
+async function startUrl(p: Provider, user: User, back: "connect" | "workspace"): Promise<string> {
+  const d = await db();
+  if (Math.random() < 0.01) await d.query("DELETE FROM oauth_states WHERE expires_at < now()");
   const state = b64url(crypto.randomBytes(24));
   const verifier = b64url(crypto.randomBytes(48));
-  states.set(state, { phone: user.phone, provider: p.id, verifier, exp: Date.now() + STATE_TTL_MS, back });
+  const doc: OAuthState = { phone: user.phone, provider: p.id, verifier, back };
+  await d.query("INSERT INTO oauth_states (state, doc, expires_at) VALUES ($1, $2, $3)", [state, JSON.stringify(doc), new Date(Date.now() + STATE_TTL_MS)]);
   const q = new URLSearchParams({
     response_type: "code",
     client_id: p.clientId!,
@@ -286,11 +300,10 @@ async function accountLabel(p: Provider, access: string): Promise<string | null>
 }
 
 async function finishOAuth(req: Request): Promise<{ user: User; provider: Provider }> {
-  const st = states.get(String(req.query.state ?? ""));
-  states.delete(String(req.query.state ?? ""));
+  const st = await takeState(String(req.query.state ?? ""));
   const p = byId(String(req.params.provider));
-  if (!st || !p || st.provider !== p.id || st.exp < Date.now()) throw new Error("This link expired. Start the connection again.");
-  const user = getUser(st.phone);
+  if (!st || !p || st.provider !== p.id) throw new Error("This link expired. Start the connection again.");
+  const user = await getUser(st.phone);
   if (!user) throw new Error("Account not found.");
   if (req.query.error) throw new Error(`${p.name} said: ${req.query.error_description ?? req.query.error}`);
   const code = String(req.query.code ?? "");
@@ -423,25 +436,26 @@ export function connectorRoutes(onFinish: (user: User) => Promise<void>): Router
   const r = Router();
   const fail = (res: Response, msg: string, status = 400) => res.status(status).json({ error: msg });
 
-  r.get("/api/connect/providers", (req, res) => {
-    const user = whoIs(req);
+  r.get("/api/connect/providers", async (req, res) => {
+    const user = await whoIs(req);
     if (!user) return fail(res, "This link expired. Text CONNECT to get a new one.", 401);
     res.json({ phoneLast4: user.phone.slice(-4), providers: providerList(user), plan: user.billing.plan, billingStatus: user.billing.status });
   });
 
-  r.get("/connect/:provider/start", (req, res) => {
-    const viaLink = Boolean(userFromToken(req.query.t));
-    const user = whoIs(req);
+  r.get("/connect/:provider/start", async (req, res) => {
+    const viaLink = Boolean(await userFromToken(req.query.t));
+    const user = await whoIs(req);
     const p = byId(req.params.provider);
-    const home = (u: User | null, q: string) => (viaLink && u ? `/connect.html?t=${connectToken(u.phone)}&${q}` : `/workspace?${q}`);
+    const home = (u: User | null, q: string) => (viaLink && u ? `/connect.html?t=${connectToken(u)}&${q}` : `/workspace?${q}`);
     if (!user || !p) return res.redirect(viaLink ? `/connect.html?error=${encodeURIComponent("This link expired. Text CONNECT to get a new one.")}` : "/signin");
     if (!available(p)) return res.redirect(home(user, `error=${encodeURIComponent(`${p.name} isn't available yet.`)}`));
-    res.redirect(startUrl(p, user, viaLink ? "connect" : "workspace"));
+    res.redirect(await startUrl(p, user, viaLink ? "connect" : "workspace"));
   });
 
   r.get("/connect/:provider/callback", async (req, res) => {
-    const st = states.get(String(req.query.state ?? "")); // read before finishOAuth consumes it
-    const home = (q: string) => (st?.back === "connect" ? `/connect.html?t=${connectToken(st.phone)}&${q}` : `/workspace?${q}`);
+    const st = await peekState(String(req.query.state ?? "")); // read before finishOAuth consumes it
+    const owner = st && (await getUser(st.phone));
+    const home = (q: string) => (st?.back === "connect" && owner ? `/connect.html?t=${connectToken(owner)}&${q}` : `/workspace?${q}`);
     try {
       const { provider } = await finishOAuth(req);
       res.redirect(home(`connected=${provider.id}`));
@@ -451,14 +465,14 @@ export function connectorRoutes(onFinish: (user: User) => Promise<void>): Router
   });
 
   r.post("/api/connect/:provider/disconnect", async (req, res) => {
-    const user = whoIs(req);
+    const user = await whoIs(req);
     if (!user) return fail(res, "This link expired. Text CONNECT to get a new one.", 401);
     await disconnect(user, req.params.provider);
     res.json({ ok: true });
   });
 
   r.post("/api/connect/finish", async (req, res) => {
-    const user = whoIs(req);
+    const user = await whoIs(req);
     if (!user) return fail(res, "This link expired. Text CONNECT to get a new one.", 401);
     await onFinish(user);
     res.json({ ok: true });

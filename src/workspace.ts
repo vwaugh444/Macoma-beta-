@@ -13,8 +13,8 @@ type Authed = Request & { user: User };
 
 // Session cookie, plus JSON bodies on writes: a cross-site form post can't send JSON
 // without a CORS preflight, and SameSite=Lax keeps the cookie off cross-site posts anyway.
-function signedIn(req: Request, res: Response, next: NextFunction) {
-  const user = userFromSession(req);
+async function signedIn(req: Request, res: Response, next: NextFunction) {
+  const user = await userFromSession(req);
   if (!user) return res.status(401).json({ error: "Please sign in again." });
   if (req.method !== "GET" && !req.is("application/json")) return res.status(415).json({ error: "Send JSON." });
   (req as Authed).user = user;
@@ -24,7 +24,7 @@ function signedIn(req: Request, res: Response, next: NextFunction) {
 export function workspaceRoutes(): Router {
   const r = Router();
 
-  r.get("/api/me", signedIn, (req, res) => {
+  r.get("/api/me", signedIn, async (req, res) => {
     const u = (req as Authed).user;
     res.json({
       phone: u.phone,
@@ -49,7 +49,7 @@ export function workspaceRoutes(): Router {
         digestHour: u.settings.digestHour,
         paymentLink: u.settings.paymentLink,
       },
-      invite: { url: `${PUBLIC_URL}/?ref=${u.code}`, joined: referralCount(u.code) },
+      invite: { url: `${PUBLIC_URL}/?ref=${u.code}`, joined: await referralCount(u.code) },
     });
   });
 
@@ -111,12 +111,12 @@ export function workspaceRoutes(): Router {
     if (req.body?.confirm !== "DELETE") return res.status(400).json({ error: "Type DELETE to confirm." });
     await disconnectAll(u);
     endSessions(res, null);
-    deleteUser(u.phone);
+    await deleteUser(u.phone);
     res.json({ ok: true });
   });
 
-  r.post("/api/logout", (req, res) => {
-    endSessions(res, userFromSession(req));
+  r.post("/api/logout", async (req, res) => {
+    endSessions(res, await userFromSession(req));
     res.json({ ok: true });
   });
 

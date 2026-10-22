@@ -1,10 +1,67 @@
-// Ticks every 30s: fires due reminders and the owner's morning brief.
-import { fmtDate, localHour, nextOccurrence } from "./business.js";
+// Time-based work: reminders, the morning brief, trial notices and the welcome-text fallback.
+//
+// Nothing scans every account. Each save stores the owner's next due time in an indexed
+// column (users.next_due_at); this loop asks Postgres for owners that are due and queues
+// one "tick" job each, which runs in that owner's lane like an inbound text.
+import { fmtDate, nextOccurrence } from "./business.js";
 import { sendSms } from "./sms.js";
 import { recordSms, trialReminder } from "./billing.js";
-import { allUsers, today, update, type Reminder, type User } from "./store.js";
+import { enqueue } from "./queue.js";
+import { duePhones, setDueIndexer, update, type Reminder, type User } from "./store.js";
 
-const TICK_MS = 30_000;
+const POLL_MS = 15_000;
+const WELCOME_FALLBACK_MS = 15 * 60_000;
+const TRIAL_NOTICE_MS = 3 * 86_400_000;
+const SLOT_MS = 15 * 60_000; // time zones are offset by whole quarter hours
+
+// Local calendar day and hour in a time zone, with formatters cached per zone.
+const formats = new Map<string, Intl.DateTimeFormat>();
+function local(tz: string, ms: number): { day: string; hour: number } {
+  let f = formats.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" });
+    formats.set(tz, f);
+  }
+  const p = Object.fromEntries(f.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
+}
+
+// The first quarter hour, from the current one on, that falls in the owner's digest hour on
+// a day that hasn't had a brief yet. In the past (or now) means the brief is due.
+function nextDigestAt(user: User, now = Date.now()): number | null {
+  const { digestHour, lastDigestDay, timezone } = user.settings;
+  if (digestHour === null) return null;
+  for (let t = Math.floor(now / SLOT_MS) * SLOT_MS, end = now + 49 * 3_600_000; t < end; t += SLOT_MS) {
+    const l = local(timezone, t);
+    if (l.hour === digestHour && l.day !== lastDigestDay) return t;
+  }
+  return null;
+}
+
+const trialNoticeAt = (u: User) =>
+  u.billing.status === "trialing" && !u.billing.trialReminderSent && u.billing.trialEndsAt ? u.billing.trialEndsAt - TRIAL_NOTICE_MS : null;
+const welcomeAt = (u: User) => (u.status === "active" && !u.welcomeSentAt && u.verifiedAt ? u.verifiedAt + WELCOME_FALLBACK_MS : null);
+
+const safe = <T>(fn: () => T): T | null => {
+  try {
+    return fn();
+  } catch {
+    return null; // e.g. an unknown time zone: skip the brief rather than fail the save
+  }
+};
+
+// When this owner next needs a tick, or null. Stored on every save.
+export function nextDueAt(user: User): number | null {
+  if (user.status !== "active" || user.optedOut) return null;
+  const times = [
+    ...user.reminders.filter((r) => !r.done).map((r) => r.dueAt),
+    safe(() => nextDigestAt(user)),
+    trialNoticeAt(user),
+    welcomeAt(user),
+  ].filter((t): t is number => typeof t === "number" && Number.isFinite(t));
+  return times.length ? Math.min(...times) : null;
+}
+setDueIndexer(nextDueAt);
 
 function reminderText(user: User, r: Reminder): string | null {
   const contact = r.contactId ? user.contacts.find((c) => c.id === r.contactId) : undefined;
@@ -41,36 +98,42 @@ function brief(user: User): string | null {
   return parts.join("\n");
 }
 
-async function tick() {
+// Runs inside the owner's job lane. Always marks the owner changed, so the save moves
+// next_due_at forward even when nothing was sent.
+export async function tickUser(user: User, sendWelcome: (u: User) => Promise<void>) {
+  update(user);
+  if (user.status !== "active" || user.optedOut) return;
   const now = Date.now();
-  for (const user of allUsers()) {
-    if (user.status !== "active" || user.optedOut) continue;
-    let changed = false;
+  const send = (text: string, what: string) =>
+    sendSms(user.phone, text).then(() => recordSms(user, text), (err) => console.error(`${what} sms failed`, err));
 
-    for (const r of user.reminders) {
-      if (r.done || r.dueAt > now) continue;
-      const text = reminderText(user, r);
-      if (r.repeat) r.dueAt = nextOccurrence(r);
-      else r.done = true;
-      changed = true;
-      if (text) await sendSms(user.phone, text).then(() => recordSms(user, text), (err) => console.error("reminder sms failed", err));
-    }
+  for (const r of user.reminders) {
+    if (r.done || r.dueAt > now) continue;
+    const text = reminderText(user, r);
+    if (r.repeat) r.dueAt = nextOccurrence(r);
+    else r.done = true;
+    if (text) await send(text, "reminder");
+  }
 
-    const heads = trialReminder(user);
-    if (heads) await sendSms(user.phone, heads).then(() => recordSms(user, heads), (err) => console.error("trial reminder failed", err));
+  const heads = trialReminder(user);
+  if (heads) await send(heads, "trial reminder");
 
-    const day = today(user.settings.timezone);
-    if (user.settings.digestHour !== null && localHour(user) === user.settings.digestHour && user.settings.lastDigestDay !== day) {
-      user.settings.lastDigestDay = day;
-      changed = true;
-      const text = brief(user);
-      if (text) await sendSms(user.phone, text).then(() => recordSms(user, text), (err) => console.error("digest sms failed", err));
-    }
+  const w = welcomeAt(user);
+  if (w && w <= now) await sendWelcome(user);
 
-    if (changed) update(user);
+  const d = nextDigestAt(user, now);
+  if (d !== null && d <= now) {
+    user.settings.lastDigestDay = local(user.settings.timezone, now).day;
+    const text = brief(user);
+    if (text) await send(text, "digest");
   }
 }
 
+// Any number of worker processes can run this; the dedupe key makes the tick job unique.
 export function startScheduler() {
-  setInterval(() => tick().catch((err) => console.error("scheduler", err)), TICK_MS);
+  const poll = async () => {
+    for (const { phone, due } of await duePhones(1000)) await enqueue(phone, "tick", {}, { dedupe: `tick:${phone}:${due}` });
+  };
+  setInterval(() => poll().catch((err) => console.error("scheduler", err)), POLL_MS).unref();
+  void poll().catch((err) => console.error("scheduler", err));
 }
