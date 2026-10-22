@@ -98,6 +98,12 @@ a { color: inherit; }
 .field input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); font: 500 19px/1 var(--sans); padding: 12px 0; }
 .field input:focus { outline: none; }
 .field:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 45%, transparent); }
+/* Phone width: the number gets the full row and the button drops below it. */
+@media (max-width: 420px) {
+  .field { flex-wrap: wrap; padding: 6px; }
+  .field input { flex-basis: 100%; padding: 12px 10px; }
+  .field > button, .field > .btn { width: 100%; }
+}
 .check { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; color: var(--muted); text-align: left; }
 .check input { margin-top: 2px; width: 18px; height: 18px; accent-color: var(--blue); flex: none; }
 .msg { min-height: 20px; font-size: 14px; }

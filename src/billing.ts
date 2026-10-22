@@ -322,7 +322,8 @@ export async function planLink(user: User, planId: PlanId = user.billing.plan, r
         message: `I agree to the [Terms](${PUBLIC_URL}/terms). After the free trial my ${p.name} plan renews every month at $${p.priceUsd} until I cancel. I can cancel anytime by texting CANCEL PLAN.`,
       },
     },
-    success_url: `${PUBLIC_URL}${returnPath}`,
+    // Tells the page whether billing starts at the end of the trial or today.
+    success_url: `${PUBLIC_URL}${returnPath.replace("paid=1", trialLeft > 48 * 3_600_000 ? "paid=trial" : "paid=now")}`,
     cancel_url: `${PUBLIC_URL}${returnPath.replace("paid=1", "paid=0")}`,
   });
   return session.url ?? fallbackLink;

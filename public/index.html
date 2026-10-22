@@ -140,6 +140,7 @@
     .promise kbd { font: 600 12.5px/1 var(--sans); background: var(--blue); color: var(--blue-fg); padding: 3px 8px; border-radius: 10px; }
 
     .start { display: grid; justify-items: center; gap: 18px; padding: 48px 24px; border-radius: 40px; margin-bottom: 30px; text-align: center; scroll-margin-top: 90px; }
+    @media (max-width: 420px) { .start { padding: 32px 14px; border-radius: 30px; } }
     .start .faces { display: flex; }
     .start .faces .face { border: 3px solid var(--glass-edge); }
     .start .faces .face + .face { margin-left: -12px; }
@@ -496,7 +497,11 @@
   $("phone").addEventListener("input", () => {
     const v = $("phone").value;
     if (v.startsWith("+")) return;
-    const d = v.replace(/\D/g, "").slice(0, 10);
+    // A leading 1 is the US country code, not part of the number; more than 10 digits means
+    // it's not a US number, so leave it as typed rather than cut digits off.
+    let d = v.replace(/\D/g, "");
+    if (d.length === 11 && d.startsWith("1")) d = d.slice(1);
+    if (d.length > 10) return;
     $("phone").value = d.length > 6 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : d.length > 3 ? `(${d.slice(0, 3)}) ${d.slice(3)}` : d;
   });
 
@@ -509,7 +514,7 @@
       await post("/api/join", { phone: $("phone").value, ref, ageConfirmed: true, agreed: true });
       $("sentTo").textContent = $("phone").value;
       show(1);
-      $("code").focus();
+      $("code").focus(); // moves focus with the step change
     } catch (err) { m.className = "msg err"; m.textContent = err.message; }
     finally { $("b1").disabled = false; }
   });
@@ -517,8 +522,10 @@
   $("f2").addEventListener("submit", async (e) => {
     e.preventDefault();
     const m = $("m2"); m.className = "msg"; m.textContent = "";
-    // Open the window inside the click so browsers allow it, then point it at the connect page.
-    const win = window.open("", "macoma-workspace");
+    if (!/^\d{6}$/.test($("code").value.trim())) { m.className = "msg err"; m.textContent = "Enter the 6-digit code."; return; }
+    // Open the window inside the click so browsers allow it, then point it at the workspace.
+    // A fresh name each time, so closing it on failure never closes a window the owner already had.
+    const win = window.open("about:blank", `macoma-${Date.now()}`);
     $("b2").disabled = true;
     try {
       const data = await post("/api/verify", { phone: $("phone").value, code: $("code").value });
@@ -530,12 +537,13 @@
       if (win) win.location.href = url;
       else $("doneText").textContent = "Almost done. Open your workspace to connect your calendar and Stripe, then we'll text you.";
       show(2);
+      $("openConnect").focus();
     } catch (err) {
       if (win) win.close();
       m.className = "msg err"; m.textContent = err.message;
     } finally { $("b2").disabled = false; }
   });
-  $("back").addEventListener("click", () => { $("code").value = ""; show(0); });
+  $("back").addEventListener("click", () => { $("code").value = ""; show(0); $("phone").focus(); });
   $("copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("link").value); } catch { $("link").select(); document.execCommand("copy"); }
     $("copy").textContent = "Copied"; setTimeout(() => ($("copy").textContent = "Copy"), 1500);

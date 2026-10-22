@@ -5,7 +5,7 @@
 // side by side. Jobs for the same phone run one at a time and in order, so a conversation
 // and its YES/NO confirmations never interleave. Each job runs as one unit of work.
 import { db } from "./db.js";
-import { unitOfWork } from "./store.js";
+import { retryTickLater, unitOfWork } from "./store.js";
 
 export type JobKind = "sms" | "stripe_billing" | "stripe_connect" | "tick";
 export type Job = { id: string; phone: string; kind: JobKind; payload: any; attempts: number };
@@ -50,6 +50,7 @@ async function finish(job: Job, err?: unknown) {
   if (job.attempts >= MAX_ATTEMPTS) {
     console.error(`job ${job.id} (${job.kind}) failed for good`, err);
     await d.query("UPDATE jobs SET status = 'failed', last_error = $2, locked_until = NULL WHERE id = $1", [job.id, message]);
+    if (job.kind === "tick") await retryTickLater(job.phone);
   } else {
     await d.query("UPDATE jobs SET status = 'queued', last_error = $2, locked_until = NULL, run_at = $3 WHERE id = $1", [
       job.id,

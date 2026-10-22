@@ -77,8 +77,8 @@
 
   <section class="sheet glass done-card" id="done" hidden>
     <div class="faces"><span data-face="biz" data-size="48"></span><span data-face="fol" data-size="48"></span><span data-face="voi" data-size="48"></span></div>
-    <h2 style="justify-content:center">Check your messages.</h2>
-    <p class="sub">We just texted you. Save the contact and reply like you'd text an assistant. You can close this window.</p>
+    <h2 style="justify-content:center" id="doneTitle" tabindex="-1">Check your messages.</h2>
+    <p class="sub" id="doneText">We just texted you. Save the contact and reply like you'd text an assistant. You can close this window.</p>
   </section>
 </main>
 <footer class="site" style="max-width:680px"><a href="/terms" target="_blank">Terms</a><a href="/privacy" target="_blank">Privacy</a><span class="legal">Apple Pay is a trademark of Apple Inc. Payments are processed by Stripe.</span></footer>
@@ -88,15 +88,26 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const q = new URLSearchParams(location.search);
-  const t = q.get("t");
-  let plan = q.get("plan") || "business";
-  // Keep the token out of the address bar once read.
-  if (t) history.replaceState(null, "", location.pathname);
+  // Keep the token out of the address bar once read, but in this tab so a reload still works.
+  const store = { get() { try { return sessionStorage.getItem("macoma_t"); } catch { return null; } }, set(v) { try { sessionStorage.setItem("macoma_t", v); } catch {} } };
+  const t = q.get("t") || store.get();
+  if (q.get("t")) store.set(q.get("t"));
+  let plan = q.get("plan") || null; // null: preselect the account's current plan
+  if ([...q.keys()].length) history.replaceState(null, "", location.pathname);
 
   const banner = (text, kind) => { const b = $("banner"); b.hidden = !text; b.className = `banner ${kind}`; b.textContent = text || ""; };
-  if (q.get("error")) banner(q.get("error"), "err");
+  // Only fixed wording is shown for these codes, never text from the address bar.
+  const ERRORS = {
+    expired: "That link expired. Text CONNECT to Macoma for a new one.",
+    unavailable: "That connection isn't available yet.",
+    browser: "Start the connection again from this browser.",
+    denied: "The connection was cancelled or declined.",
+    failed: "That connection didn't go through. Try again.",
+  };
+  const PAID = { trial: "Your plan is set up. You won't be charged until the trial ends.", now: "Your plan is active. Stripe will email your receipt." };
+  if (q.get("error")) banner(ERRORS[q.get("error")] || ERRORS.failed, "err");
   if (q.get("connected")) banner("Connected.", "ok");
-  if (q.get("paid") === "1") { banner("Your plan is set up. You won't be charged until the trial ends.", "ok"); $("n2").classList.add("done"); $("n2").textContent = "✓"; }
+  if (PAID[q.get("paid")]) { banner(PAID[q.get("paid")], "ok"); $("n2").classList.add("done"); $("n2").textContent = "✓"; }
 
   const COLORS = { google_calendar: "#4285f4", gmail: "#d93025", microsoft: "#0078d4", quickbooks: "#2ca01c", square: "#3e4348", stripe: "#635bff" };
   const INITIAL = { google_calendar: "C", gmail: "M", microsoft: "O", quickbooks: "Q", square: "S", stripe: "S" };
@@ -107,7 +118,7 @@
     if (!res.ok) throw new Error(data.error || "Something went wrong.");
     return data;
   }
-  const post = (url, body) => api(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ t, ...body }) });
+  const post = (url, body) => api(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...(t ? { t } : {}), ...body }) });
 
   function render(data) {
     $("who").textContent = `For the number ending ${data.phoneLast4}. So your assistants can see your day and get you paid.`;
@@ -130,7 +141,7 @@
       } else if (p.available) {
         const a = document.createElement("a");
         a.className = "btn-sm"; a.textContent = "Connect";
-        a.href = `/connect/${p.id}/start?t=${encodeURIComponent(t)}`;
+        a.href = `/connect/${p.id}/start${t ? `?t=${encodeURIComponent(t)}` : ""}`;
         slot.append(a);
       } else {
         const s = document.createElement("span");
@@ -141,11 +152,15 @@
     }
     if (data.providers.some((p) => p.connected)) { $("n1").classList.add("done"); $("n1").textContent = "✓"; }
     if (data.billingStatus === "active") { $("n2").classList.add("done"); $("n2").textContent = "✓"; $("payNote").textContent = "Your plan is active."; }
+    // Already subscribed: the button changes the plan in place instead of starting another subscription.
+    if (data.hasSubscription) { $("pay").textContent = "Switch plan"; $("h2").lastChild.textContent = "Your plan"; }
+    if (!plan) { plan = data.plan; markPlan(); }
   }
+  function markPlan() { $("plans").querySelectorAll(".plan").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.id === plan))); }
 
   async function load() {
-    if (!t) { banner("This link has expired. Text CONNECT to Macoma for a new one.", "err"); $("list").replaceChildren(); return; }
-    try { render(await api(`/api/connect/providers?t=${encodeURIComponent(t)}`)); }
+    // Without a link token the session cookie may still sign the owner in; "expired" only on a 401.
+    try { render(await api(`/api/connect/providers${t ? `?t=${encodeURIComponent(t)}` : ""}`)); }
     catch (e) { banner(e.message, "err"); $("list").replaceChildren(); }
   }
 
@@ -156,11 +171,11 @@
     box.replaceChildren();
     for (const p of data.plans) {
       const b = document.createElement("button");
-      b.type = "button"; b.className = "plan"; b.setAttribute("aria-pressed", String(p.id === plan));
+      b.type = "button"; b.className = "plan"; b.dataset.id = p.id; b.setAttribute("aria-pressed", String(p.id === plan));
       b.innerHTML = `<strong></strong><span class="p">$${p.priceUsd}<small> /mo</small></span><span></span>`;
       b.querySelector("strong").textContent = p.name;
       b.querySelector("span:last-child").textContent = `${p.replies} replies${p.customerTexts ? ` · ${p.customerTexts} customer texts` : ""}${p.invoiceFeePct ? ` · ${p.invoiceFeePct}% invoice fee` : ""}`;
-      b.addEventListener("click", () => { plan = p.id; box.querySelectorAll(".plan").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
+      b.addEventListener("click", () => { plan = p.id; markPlan(); });
       box.append(b);
     }
   }
@@ -168,7 +183,7 @@
   $("pay").addEventListener("click", async () => {
     $("pay").disabled = true;
     try {
-      const r = await post("/api/billing/checkout", { plan });
+      const r = await post("/api/billing/checkout", { plan: plan || "business" });
       if (r.url) location.href = r.url;
       else { $("payNote").textContent = r.message; $("n2").classList.add("done"); $("n2").textContent = "✓"; $("pay").disabled = false; }
     } catch (e) { banner(e.message, "err"); $("pay").disabled = false; }
@@ -177,11 +192,13 @@
   $("finish").addEventListener("click", async () => {
     $("finish").disabled = true;
     try {
-      await post("/api/connect/finish", {});
+      const r = await post("/api/connect/finish", {});
       document.querySelectorAll("main > section:not(#done)").forEach((s) => (s.hidden = true));
+      if (!r.texted) $("doneText").textContent = "You're all set. Your assistant already has your number, so just text it like you'd text an assistant. You can close this window.";
       $("done").hidden = false;
       banner("", "ok");
       window.scrollTo(0, 0);
+      $("doneTitle").focus();
     } catch (e) { banner(e.message, "err"); $("finish").disabled = false; }
   });
 

@@ -488,6 +488,27 @@ export async function duePhones(limit = 500): Promise<{ phone: string; due: numb
   return rows.map((r) => ({ phone: r.phone, due: new Date(r.next_due_at).getTime() }));
 }
 
+// Hands out up to `limit` due owners as tick jobs in one statement: their due time is cleared
+// (the tick's save sets the next one) and the jobs are queued together, so several schedulers
+// never pick the same owner and a crash can't lose one between the two steps.
+export async function queueDueTicks(limit = 1000): Promise<number> {
+  const { rowCount } = await (await db()).query(
+    `WITH due AS (
+       SELECT phone FROM users WHERE next_due_at <= now() ORDER BY next_due_at LIMIT $1 FOR UPDATE SKIP LOCKED
+     ), cleared AS (
+       UPDATE users u SET next_due_at = NULL FROM due WHERE u.phone = due.phone RETURNING u.phone
+     )
+     INSERT INTO jobs (phone, kind, payload) SELECT phone, 'tick', '{}' FROM cleared`,
+    [limit],
+  );
+  return rowCount;
+}
+
+// A tick that failed for good: try again in an hour rather than drop the owner's schedule.
+export async function retryTickLater(phone: string) {
+  await (await db()).query("UPDATE users SET next_due_at = now() + interval '1 hour' WHERE phone = $1 AND next_due_at IS NULL", [phone]);
+}
+
 // One-time import of the old JSON-file store, if it exists and the database is empty.
 export async function importLegacyStore() {
   const file = path.join(process.env.DATA_DIR ?? "data", "db.json");

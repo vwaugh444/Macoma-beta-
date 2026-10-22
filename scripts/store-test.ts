@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "macoma-store-"));
 process.env.QUIET_SMS = "true";
+process.env.DIGEST_SPREAD_MIN = "0"; // briefs exactly on the hour, so "due now" is testable
 delete process.env.TWILIO_ACCOUNT_SID;
 
 const store = await import("../src/store.js");
@@ -102,6 +103,10 @@ check("next_due_at follows reminders, and a tick sends and advances it", async (
   });
   const due = await store.duePhones();
   assert.ok(due.some((d) => d.phone === "+15550000003"));
+  // Two schedulers at once hand the owner out once.
+  const [a, b] = await Promise.all([store.queueDueTicks(1000), store.queueDueTicks(1000)]);
+  const { rows: ticks } = await (await db()).query("SELECT count(*)::int AS n FROM jobs WHERE phone = $1 AND kind = 'tick'", ["+15550000003"]);
+  assert.equal(ticks[0].n, 1, `ticks queued ${a}+${b}`);
   const before = outbox.length;
   await store.unitOfWork(async () => sched.tickUser((await store.getUser("+15550000003"))!, async () => {}, (u, b) => sendSms(u.phone, b)));
   assert.ok(outbox.slice(before).some((m) => m.to === "+15550000003" && m.body.includes("copper fittings")));
@@ -148,7 +153,8 @@ check("jobs for one phone run one at a time and in order; other phones run along
   let maxSame = 0;
   let maxAll = 0;
   let running = 0;
-  const handler = async (job: { phone: string; payload: any }) => {
+  const handler = async (job: { phone: string; kind: string; payload: any }) => {
+    if (job.kind !== "sms") return; // ticks queued by earlier checks
     running++;
     maxAll = Math.max(maxAll, running);
     if (job.phone === "+15551110000") {

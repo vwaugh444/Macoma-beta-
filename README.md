@@ -75,7 +75,7 @@ cp .env.example .env        # set ANTHROPIC_API_KEY at minimum
 npm run dev
 ```
 
-With Twilio left blank, texts the agent sends are printed to the console, including the 6-digit sign-in code. To simulate an incoming text:
+No database to install: without `DATABASE_URL` it runs an embedded Postgres in `data/pg`. With Twilio left blank, texts the agent sends are printed to the console, including the 6-digit sign-in code. To simulate an incoming text:
 
 ```bash
 curl -X POST localhost:3000/sms -d 'From=+14155550100' -d 'Body=find me a ramen spot near union square'
@@ -91,12 +91,12 @@ curl -X POST localhost:3000/sms -d 'From=+14155550100' -d 'Body=find me a ramen 
 
 ### Stripe invoices (optional)
 
-Set `STRIPE_SECRET_KEY` and add a webhook for `invoice.paid` pointing to `{PUBLIC_URL}/stripe/webhook`, with its signing secret in `STRIPE_WEBHOOK_SECRET`. Without Stripe, invoices link to the owner's own payment link (Square, Venmo, PayPal...). The owner can set it by texting it to Macoma.
+Set `STRIPE_SECRET_KEY`. Add a platform webhook (`{PUBLIC_URL}/stripe/webhook`) for `checkout.session.completed`, `checkout.session.async_payment_succeeded` and `customer.subscription.*`, and a Connect webhook (`{PUBLIC_URL}/stripe/connect-webhook`) for `invoice.paid`. Put their signing secrets in `STRIPE_WEBHOOK_SECRET` and `STRIPE_CONNECT_WEBHOOK_SECRET`. Without Stripe, invoices link to the owner's own payment link (Square, Venmo, PayPal...). The owner can set it by texting it to Macoma.
 
 ### x402 setup
 
 - **Let the agent pay.** Generate a new testnet key, set `AGENT_WALLET_PRIVATE_KEY`, and fund the wallet with Base Sepolia USDC from a faucet. Each user has a spending limit of `MAX_SPEND_PER_CALL_USD` per call and `DAILY_BUDGET_USD` per day. Before paying, the agent reads the endpoint's price from its 402 response.
-- **Charge other agents.** Set `X402_PAY_TO` to your receiving address and `A2A_PRICE`, for example `$0.01`. Calls to `POST /a2a` then return 402 until they're paid.
+- **Charge other agents.** Set `X402_PAY_TO` to your receiving address and `A2A_PRICE`, for example `$0.01`. Calls to `POST /a2a` then return 402 until they're paid. (Without either this or `A2A_FREE=true`, the A2A endpoint is off.)
 - Switch to mainnet with `X402_NETWORK=eip155:8453` and a mainnet facilitator.
 
 ### Try A2A
@@ -110,14 +110,27 @@ curl -X POST localhost:3000/a2a -H 'content-type: application/json' -d '{
 
 Or text your agent: "ask the agent at https://some-agent.example.com to …"
 
+## Running at scale
+
+Macoma is built to run for 500,000 owners on Postgres with separate web and worker processes. Webhooks only queue work, and workers handle each owner's texts one at a time and in order. Reminders come from an index, so nothing scans every account. See [docs/CAPACITY.md](docs/CAPACITY.md) for the design, the load-test results and the sizing.
+
+```bash
+DATABASE_URL=postgres://… ROLE=web npm start      # pages, sign-in, webhooks
+DATABASE_URL=postgres://… ROLE=worker npm start   # jobs, agent, reminders (run several)
+npm run test:store                                # concurrency and queue checks
+npm run load-test                                 # many owners at once, stand-in model
+```
+
 ## Config
 
 All configuration is in `.env.example`. `INVITE_ONLY=true` makes a friend's link a requirement for joining.
 
 ## Notes
 
-- Storage is a JSON file in `data/`. Use a real database before you have real users.
-- Signing up is limited to 10 attempts per IP per hour and 3 codes per number per hour, so the form can't be used to spam strangers.
+- Storage is Postgres (`DATABASE_URL`), or an embedded copy in `data/pg` for development. An old `data/db.json` is imported once on first start.
+- Signing up is limited to 10 attempts per IP and 3 codes per number per hour, plus a service-wide hourly cap. Codes go only to `OTP_COUNTRY_CODES` (US/Canada by default), so the form can't be used to spam strangers or pump premium-rate texts.
+- Each number gets one free trial. A hash of the number is kept after deletion so delete-and-rejoin doesn't reset it.
+- Texts to customers, invoices, web requests and messages to other agents all wait for the owner's YES to the exact draft. A YES only counts if the draft was the last thing Macoma texted.
 - Consent records (time, method, terms version) are kept even after an account is deleted.
 - Before launch: register with carriers (A2P 10DLC or toll-free verification), have a lawyer review the legal pages, and add billing. See `docs/requirements.md`.
-- Agents calling over A2A get research tools only. They can't use the wallet or read user memory.
+- Agents calling over A2A get research tools only. They can't use the wallet or read user memory. A2A is off unless it's paid (x402) or `A2A_FREE=true`, and it has a daily spend cap.

@@ -121,9 +121,9 @@ Two laws take effect inside the launch window, and the beta build must already f
 | 2 | Consent records; STOP, START, HELP | ✅ | Consent checkbox must be split in two ([4.8](#48-website-and-sign-up)) | [4.7](#47-texting-rules-engine-the-january-2027-laws) |
 | 3 | Claude agent replies | 🟡 | Your Anthropic key; cheap-model routing not built | [4.4](#44-anthropic-account-tier-and-spend-cap) |
 | 4 | Real SMS through Twilio | 🟡 | Twilio account and carrier registration | [4.3](#43-texting-registration-with-twilio) |
-| 5 | Reminders, reorders, repeating reminders | ✅ logic / 🟡 live | Must move from a timer to database rows | [4.5](#45-the-three-rewrites-database-reminders-message-handling) |
+| 5 | Reminders, reorders, repeating reminders | ✅ | Database-driven (`next_due_at` index), tested with 50,000 due at once; watch one fire on a real server | [4.5](#45-the-three-rewrites-database-reminders-message-handling) |
 | 6 | Morning brief | 🟡 | Watch one fire on a real server | [15](#15-owner-features-already-in-the-product) |
-| 7 | Texting customers after YES | ✅ / 🔴 hardening | Today the AI writes the confirmation and "OK" counts as yes | [4.6](#46-the-yes-gate-moved-into-server-code) |
+| 7 | Texting customers after YES | ✅ | Server writes the exact draft; "OK" isn't a yes; a YES only counts for the last draft shown | [4.6](#46-the-yes-gate-moved-into-server-code) |
 | 8 | "Tap to send" from the owner's phone | 🔴 | Build | [11](#11-channel-plan-sms-first-then-rcs-imessage-only-for-macomas-own-brand) |
 | 9 | Customer replies sent to the owner; customer STOP | ✅ | none | [15](#15-owner-features-already-in-the-product) |
 | 10 | Invoices with the owner's own payment link | ✅ | none | [15](#15-owner-features-already-in-the-product) |
@@ -134,9 +134,9 @@ Two laws take effect inside the launch window, and the beta build must already f
 | 15 | Token encryption | 🟡 | Uses one app key; move to cloud key service (KMS) | [13](#13-security-controls) |
 | 16 | Agent scenario tests (24 scenarios, `npm run evals`) | 🟡 | Not run in this review; needs your API key | [12](#12-model-testing-and-evals) |
 | 17 | Recipient-time quiet hours, frequency cap, AI footer, 988 path | 🔴 | Build before Jan 1, 2027 | [4.7](#47-texting-rules-engine-the-january-2027-laws) |
-| 18 | Postgres database with per-owner walls (RLS) | 🔴 | Build | [4.5](#45-the-three-rewrites-database-reminders-message-handling) |
-| 19 | Durable message handling (no lost or double replies) | 🔴 | Build | [4.5](#45-the-three-rewrites-database-reminders-message-handling) |
-| 20 | Twilio Verify, VoIP and non-US blocking, bot check | 🔴 | Build | [4.8](#48-website-and-sign-up) |
+| 18 | Postgres database with per-owner walls (RLS) | ✅ Postgres / 🔴 RLS | Row-level security as a second wall is still to build | [4.5](#45-the-three-rewrites-database-reminders-message-handling) |
+| 19 | Durable message handling (no lost or double replies) | ✅ | Postgres job queue, one job at a time per owner, dedupe on Twilio/Stripe ids ([docs/CAPACITY.md](CAPACITY.md)) | [4.5](#45-the-three-rewrites-database-reminders-message-handling) |
+| 20 | Twilio Verify, VoIP and non-US blocking, bot check | 🟡 | Country allow-list and a service-wide code cap are built; Verify/Fraud Guard, VoIP lookup and a bot check are not | [4.8](#48-website-and-sign-up) |
 | 21 | Spend-cap alarms and "working on it" holding text | 🔴 | Build | [4.4](#44-anthropic-account-tier-and-spend-cap) |
 | 22 | Kill switch, audit log, SIM-swap check | 🔴 | Build | [13](#13-security-controls) |
 | 23 | Legal pages | 🟡 drafts | Lawyer | [4.2](#42-company-lawyer-and-legal-pages) |
@@ -239,7 +239,9 @@ Anthropic's monthly spend caps are **$500 on Start, $1,000 on Build and $200,000
 **Done when:** the Console shows Scale (cap $200,000) on production, spend alerts are set, ZDR is answered in writing, and the eval set costs ≤ $0.02 per text with a cache-hit rate of 80% or more.
 
 ### 4.5 The three rewrites: database, reminders, message handling
-Status 🔴. Code to replace: `src/store.ts` (JSON file), `src/scheduler.ts` (30-second timer), the in-memory queue in `src/server.ts`. Playbook rows 0.6–0.8.
+Status ✅ built (October 2026). Postgres store, a durable job queue in Postgres instead of Inngest (one fewer vendor; same guarantees: one job at a time per owner, dedupe, retries) and indexed reminders. Load-tested on one machine: 10,000 texts to 100,000 owners with nothing lost, and 50,000 reminders due at once all sent in 24 s. Design, numbers and sizing for 500k owners: [docs/CAPACITY.md](CAPACITY.md). Still to do from this section: row-level security, the nightly off-platform backup and the restore drill.
+
+Original plan, for reference. Code to replace: `src/store.ts` (JSON file), `src/scheduler.ts` (30-second timer), the in-memory queue in `src/server.ts`. Playbook rows 0.6–0.8.
 
 Today Macoma is one program with a JSON file and a timer. If two copies run, reminders fire twice; every deploy loses timers. These rewrites fix that.
 
@@ -252,9 +254,9 @@ Today Macoma is one program with a JSON file and a timer. If two copies run, rem
 **Done when:** a restart keeps all data; one restore drill is done and you can see the restored copy; a duplicate webhook gets one reply; two server copies run without double reminders; reminders survive a deploy.
 
 ### 4.6 The YES gate, moved into server code
-Status ✅ basic / 🔴 hardening. Code: `src/business.ts` (`draftContactMessage`, `confirmPending`), `src/server.ts` (`YES_WORDS`). Playbook row 0.9.
+Status ✅ built. Code: `src/business.ts` (`exactDraft`, `confirmPending`), `src/inbound.ts` (`YES_WORDS`). Playbook row 0.9. The server now writes the draft the owner approves; OK no longer counts; web requests and messages to other agents also wait for YES; and a YES only approves the draft if it was the last thing texted. The text below is the original problem statement.
 
-Today the AI writes the confirmation text the owner sees, and the server accepts YES, Y, SEND, CONFIRM, **OK** or AGREE. A poisoned email or customer text could steer that. This is the single highest-value fix in the repo.
+Before the fix, the AI wrote the confirmation text the owner sees, and the server accepts YES, Y, SEND, CONFIRM, **OK** or AGREE. A poisoned email or customer text could steer that. This is the single highest-value fix in the repo.
 
 1. **BUILD:** The server, not the AI, writes the confirmation from the tool's exact details: "Send to Dana Lee (•••-4410): 'Running 15 min late, see you at 3:15.' Reply YES 4821 to send."
 2. **BUILD:** Require **YES plus the code**. Drop OK, Y and AGREE. Accept it only from the owner's verified number, and expire it after a set time.

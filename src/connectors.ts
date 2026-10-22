@@ -459,7 +459,13 @@ export function connectorRoutes(onFinish: (user: User) => Promise<boolean>): Rou
   r.get("/api/connect/providers", async (req, res) => {
     const user = await whoIs(req);
     if (!user) return fail(res, "This link expired. Text CONNECT to get a new one.", 401);
-    res.json({ phoneLast4: user.phone.slice(-4), providers: providerList(user), plan: user.billing.plan, billingStatus: user.billing.status });
+    res.json({
+      phoneLast4: user.phone.slice(-4),
+      providers: providerList(user),
+      plan: user.billing.plan,
+      billingStatus: user.billing.status,
+      hasSubscription: Boolean(user.billing.stripeSubscriptionId) && user.billing.status !== "canceled",
+    });
   });
 
   r.get("/connect/:provider/start", async (req, res) => {
@@ -468,8 +474,8 @@ export function connectorRoutes(onFinish: (user: User) => Promise<boolean>): Rou
     const p = byId(req.params.provider);
     const t = viaLink ? String(req.query.t) : null;
     const home = (q: string) => (t ? `/connect.html?t=${encodeURIComponent(t)}&${q}` : `/workspace?${q}`);
-    if (!user || !p) return res.redirect(viaLink ? `/connect.html?error=${encodeURIComponent("This link expired. Text CONNECT to get a new one.")}` : "/signin");
-    if (!available(p)) return res.redirect(home(`error=${encodeURIComponent(`${p.name} isn't available yet.`)}`));
+    if (!user || !p) return res.redirect(viaLink ? "/connect.html?error=expired" : "/signin");
+    if (!available(p)) return res.redirect(home("error=unavailable"));
     res.redirect(await startUrl(p, user, viaLink ? "connect" : "workspace", t, res));
   });
 
@@ -480,7 +486,11 @@ export function connectorRoutes(onFinish: (user: User) => Promise<boolean>): Rou
       const { provider } = await finishOAuth(req);
       res.redirect(home(`connected=${provider.id}`));
     } catch (err) {
-      res.redirect(home(`error=${encodeURIComponent((err as Error).message)}`));
+      // Pages show fixed wording for a short code, so nobody can put their own text in the banner.
+      const msg = (err as Error).message;
+      console.warn(`connect ${req.params.provider} failed: ${msg}`);
+      const code = /browser/.test(msg) ? "browser" : /expired|not found/.test(msg) ? "expired" : / said: /.test(msg) ? "denied" : "failed";
+      res.redirect(home(`error=${code}`));
     }
   });
 

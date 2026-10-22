@@ -5,8 +5,8 @@
 // one "tick" job each, which runs in that owner's lane like an inbound text.
 import { fmtDate, nextOccurrence } from "./business.js";
 import { trialReminder } from "./billing.js";
-import { enqueue } from "./queue.js";
-import { duePhones, setDueIndexer, update, type Reminder, type User } from "./store.js";
+import crypto from "node:crypto";
+import { queueDueTicks, setDueIndexer, update, type Reminder, type User } from "./store.js";
 
 const POLL_MS = 15_000;
 const CATCH_UP_AFTER_MS = 6 * 3_600_000;
@@ -26,14 +26,22 @@ function local(tz: string, ms: number): { day: string; hour: number } {
   return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
 }
 
-// The first quarter hour, from the current one on, that falls in the owner's digest hour on
-// a day that hasn't had a brief yet. In the past (or now) means the brief is due.
+// Each owner's brief lands at the same spot within their hour, spread over the first
+// DIGEST_SPREAD_MIN minutes, so a whole time zone's 8am isn't one burst of texts.
+const SPREAD_MS = Number(process.env.DIGEST_SPREAD_MIN ?? 45) * 60_000;
+const spread = (phone: string) => (SPREAD_MS ? crypto.createHash("sha256").update(phone).digest().readUInt32BE(0) % SPREAD_MS : 0);
+
+// When the owner's next morning brief is due: within the next local digest hour on a day that
+// hasn't had one yet (the current hour counts). In the past (or now) means it's due.
 function nextDigestAt(user: User, now = Date.now()): number | null {
   const { digestHour, lastDigestDay, timezone } = user.settings;
   if (digestHour === null) return null;
   for (let t = Math.floor(now / SLOT_MS) * SLOT_MS, end = now + 49 * 3_600_000; t < end; t += SLOT_MS) {
     const l = local(timezone, t);
-    if (l.hour === digestHour && l.day !== lastDigestDay) return t;
+    if (l.hour !== digestHour || l.day === lastDigestDay) continue;
+    let hourStart = t; // the current slot may be mid-hour; step back to the hour's first quarter
+    while (local(timezone, hourStart - SLOT_MS).hour === digestHour && local(timezone, hourStart - SLOT_MS).day === l.day) hourStart -= SLOT_MS;
+    return hourStart + spread(user.phone);
   }
   return null;
 }
@@ -142,10 +150,17 @@ export async function tickUser(user: User, sendWelcome: (u: User) => Promise<unk
   }
 }
 
-// Any number of worker processes can run this; the dedupe key makes the tick job unique.
+// Any number of worker processes can run this. Drains in batches while owners are due.
 export function startScheduler() {
+  let running = false;
   const poll = async () => {
-    for (const { phone, due } of await duePhones(1000)) await enqueue(phone, "tick", {}, { dedupe: `tick:${phone}:${due}` });
+    if (running) return;
+    running = true;
+    try {
+      while ((await queueDueTicks(1000)) === 1000);
+    } finally {
+      running = false;
+    }
   };
   setInterval(() => poll().catch((err) => console.error("scheduler", err)), POLL_MS).unref();
   void poll().catch((err) => console.error("scheduler", err));

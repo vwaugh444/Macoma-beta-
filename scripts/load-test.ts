@@ -110,4 +110,20 @@ Accepted all    ${(accepted / 1000).toFixed(1)}s  (${Math.round(MESSAGES / (acce
 Answered all    ${(drained / 1000).toFixed(1)}s  (${(MESSAGES / (drained / 1000)).toFixed(1)} replies/s with ${process.env.WORKER_CONCURRENCY} workers, model ${process.env.AI_MOCK_MS} ms)
 Replies sent    ${replies.toLocaleString()} · failed jobs ${failed[0].n} · owners with lost or extra turns ${mismatched}
 Database        ${process.env.DATABASE_URL ? "Postgres" : "embedded (PGlite, single connection: far slower than real Postgres)"}`);
-process.exit(errors || failed[0].n || mismatched || replies !== MESSAGES ? 1 : 0);
+
+// --- a reminder burst: many owners due at the same moment (think 8am in one time zone) ----------
+const BURST = Math.min(USERS, Number(process.env.LOAD_REMINDERS ?? 20_000));
+const reminder = { id: "r_load", kind: "reminder", text: "load-test reminder", dueAt: Date.now() - 1000, repeat: null, contactId: null, onlyIfNoReply: false, createdAt: Date.now(), done: false };
+await d.query(
+  `UPDATE users SET doc = jsonb_set(doc, '{reminders}', jsonb_build_array($2::jsonb)), next_due_at = now()
+   WHERE phone IN (SELECT phone FROM users WHERE phone LIKE '+1777%' AND phone <> '+17770000000' ORDER BY phone LIMIT $1)`,
+  [BURST, JSON.stringify(reminder)],
+);
+const sentBefore = sent.count;
+const burstStart = Date.now();
+while (sent.count - sentBefore < BURST && Date.now() - burstStart < 600_000) await new Promise((r) => setTimeout(r, 250));
+const burstS = (Date.now() - burstStart) / 1000;
+const { rows: stillDue } = await d.query("SELECT count(*)::int AS n FROM users WHERE phone LIKE '+1777%' AND doc->'reminders'->0->>'done' = 'false'");
+console.log(`Reminder burst  ${BURST.toLocaleString()} owners due at once: all texted in ${burstS.toFixed(1)}s (${Math.round(BURST / burstS)}/s), ${stillDue[0].n} left undone`);
+
+process.exit(errors || failed[0].n || mismatched || replies !== MESSAGES || stillDue[0].n ? 1 : 0);

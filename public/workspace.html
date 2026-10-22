@@ -195,9 +195,18 @@
   let me = null;
 
   const flash = (text, kind = "ok") => { const f = $("flash"); f.hidden = !text; f.className = `flash ${kind}`; f.textContent = text || ""; if (text) scrollTo(0, 0); };
-  if (q.get("error")) flash(q.get("error"), "err");
+  // Only fixed wording is shown for these codes, never text from the address bar.
+  const ERRORS = {
+    expired: "That link expired. Text CONNECT to Macoma for a new one.",
+    unavailable: "That connection isn't available yet.",
+    browser: "Start the connection again from this browser.",
+    denied: "The connection was cancelled or declined.",
+    failed: "That connection didn't go through. Try again.",
+  };
+  const PAID = { trial: "Your plan is set up. You won't be charged until the trial ends.", now: "Your plan is active. Stripe will email your receipt." };
+  if (q.get("error")) flash(ERRORS[q.get("error")] || ERRORS.failed, "err");
   else if (q.get("connected")) flash("Connected.");
-  else if (q.get("paid") === "1") flash("Your plan is set up. You won't be charged until the trial ends.");
+  else if (PAID[q.get("paid")]) flash(PAID[q.get("paid")]);
   if ([...q.keys()].length) history.replaceState(null, "", location.pathname + location.hash + (q.get("welcome") ? "" : ""));
 
   async function api(url, body) {
