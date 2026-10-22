@@ -110,6 +110,10 @@ curl -X POST localhost:3000/a2a -H 'content-type: application/json' -d '{
 
 Or text your agent: "ask the agent at https://some-agent.example.com to …"
 
+## Put it online in a day
+
+[docs/LAUNCH_DAY.md](docs/LAUNCH_DAY.md) is the hour-by-hour plan. It covers the API keys to get, every connector's console steps and callback URL, Stripe checkout with Apple Pay in test mode, and a one-click Render deploy from `render.yaml`.
+
 ## Running at scale
 
 Macoma is built to run for 500,000 owners on Postgres with separate web and worker processes. Webhooks only queue work, and workers handle each owner's texts one at a time and in order. Reminders come from an index, so nothing scans every account. See [docs/CAPACITY.md](docs/CAPACITY.md) for the design, the load-test results and the sizing.
