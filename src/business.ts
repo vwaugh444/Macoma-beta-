@@ -1,8 +1,9 @@
 // Owner tools: contacts, reminders, follow-ups, reorders, invoices.
 // Anything that reaches a third party goes through `propose()` and only runs
 // after the owner replies YES.
-import Stripe from "stripe";
+import { stripe, stripeEnabled, type Stripe } from "./stripeClient.js";
 import { sendSms } from "./sms.js";
+import * as billing from "./billing.js";
 import {
   id,
   isDoNotText,
@@ -14,8 +15,7 @@ import {
   type User,
 } from "./store.js";
 
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
-export const stripeEnabled = Boolean(stripe);
+export { stripeEnabled };
 const CONFIRM_TTL_MS = 30 * 60 * 1000;
 
 // --- action log ---------------------------------------------------------------
@@ -159,6 +159,8 @@ export function draftContactMessage(user: User, contactRef: string, text: string
   if (!c.phone) throw new Error(`${c.name} has no phone number on file.`);
   if (isDoNotText(c.phone)) throw new Error(`${c.name} has opted out of texts. Reach them another way.`);
   if (inQuietHours(user)) throw new Error("It's outside 8am–9pm. Set a reminder to send it in the morning instead.");
+  const limit = billing.canTextCustomer(user);
+  if (limit) throw new Error(limit);
   const body = `${text}\n\n– ${signature(user)} (sent via Macoma)`;
   propose(user, "message_contact", `Text ${c.name}: "${text}"`, { contactId: c.id, text: body });
   return `Drafted. Show the owner this exact message to ${c.name} and ask them to reply YES to send or NO to cancel:\n${body}`;
@@ -170,7 +172,9 @@ async function deliverToContact(user: User, contactId: string, body: string): Pr
   if (isDoNotText(c.phone)) throw new Error(`${c.name} has opted out of texts`);
   // First-ever message to this number carries opt-out instructions.
   const first = !c.lastOutboundAt;
-  await sendSms(c.phone, first ? `${body}\nReply STOP to opt out.` : body);
+  const text = first ? `${body}\nReply STOP to opt out.` : body;
+  await sendSms(c.phone, text);
+  billing.recordCustomerText(user, text);
   c.lastOutboundAt = Date.now();
   update(user);
   return `Sent to ${c.name}. I'll pass along anything they text back.`;
@@ -274,8 +278,10 @@ export function proposeSendInvoice(user: User, invoiceId: string): string {
   if (!inv) throw new Error(`No invoice ${invoiceId}`);
   const c = user.contacts.find((x) => x.id === inv.contactId)!;
   if (!c.phone && !c.email) throw new Error(`${c.name} has no phone or email on file.`);
-  if (!stripe && !user.settings.paymentLink)
-    throw new Error("No way to collect payment yet. Ask the owner for a payment link (Square, Venmo, PayPal, Stripe) and save it with update_profile.");
+  if (!(stripe && user.billing.connectAccountId) && !user.settings.paymentLink)
+    throw new Error(
+      "No way to collect payment yet. Ask the owner to connect Stripe (text CONNECT for the link) so customers can pay with Apple Pay, or to send a payment link (Square, Venmo, PayPal) to save with update_profile.",
+    );
   propose(user, "send_invoice", `Send ${inv.number} ($${inv.total.toFixed(2)}) to ${c.name}`, { invoiceId });
   return `Ready. Show the owner this and ask them to reply YES to send it to ${c.name}:\n${invoiceText(user, inv)}`;
 }
@@ -285,30 +291,41 @@ async function deliverInvoice(user: User, invoiceId: string): Promise<string> {
   if (!inv) throw new Error("invoice not found");
   const c = user.contacts.find((x) => x.id === inv.contactId)!;
 
-  if (stripe) {
-    const customer = await stripe.customers.create({
-      name: c.name,
-      email: c.email ?? undefined,
-      phone: c.phone ?? undefined,
-      metadata: { owner: user.phone, contactId: c.id },
-    });
-    const draft = await stripe.invoices.create({
-      customer: customer.id,
-      collection_method: "send_invoice",
-      days_until_due: Math.max(1, Math.ceil((inv.dueDate - Date.now()) / 86_400_000)),
-      metadata: { owner: user.phone, invoiceId: inv.id },
-    });
-    for (const item of inv.items) {
-      await stripe.invoiceItems.create({
+  const acct = user.billing.connectAccountId;
+  if (stripe && acct) {
+    // Direct charge on the owner's own Stripe account: the owner is the merchant,
+    // Stripe's processing fee comes out of their payout, and Macoma's fee is the application fee.
+    // The hosted invoice page offers Apple Pay to the customer automatically.
+    const opts = { stripeAccount: acct };
+    const customer = await stripe.customers.create(
+      { name: c.name, email: c.email ?? undefined, phone: c.phone ?? undefined, metadata: { macomaOwner: user.phone, contactId: c.id } },
+      opts,
+    );
+    const fee = billing.invoiceFeeCents(user, inv.total);
+    const draft = await stripe.invoices.create(
+      {
         customer: customer.id,
-        invoice: draft.id,
-        currency: inv.currency,
-        amount: Math.round(item.quantity * item.unitPrice * 100),
-        description: `${item.quantity} × ${item.description}`,
-      });
+        collection_method: "send_invoice",
+        days_until_due: Math.max(1, Math.ceil((inv.dueDate - Date.now()) / 86_400_000)),
+        metadata: { owner: user.phone, invoiceId: inv.id },
+        ...(fee > 0 ? { application_fee_amount: fee } : {}),
+      },
+      opts,
+    );
+    for (const item of inv.items) {
+      await stripe.invoiceItems.create(
+        {
+          customer: customer.id,
+          invoice: draft.id,
+          currency: inv.currency,
+          amount: Math.round(item.quantity * item.unitPrice * 100),
+          description: `${item.quantity} × ${item.description}`,
+        },
+        opts,
+      );
     }
-    const final = await stripe.invoices.finalizeInvoice(draft.id!);
-    if (c.email) await stripe.invoices.sendInvoice(final.id!);
+    const final = await stripe.invoices.finalizeInvoice(draft.id!, {}, opts);
+    if (c.email) await stripe.invoices.sendInvoice(final.id!, {}, opts);
     inv.stripeId = final.id!;
     inv.payUrl = final.hosted_invoice_url ?? null;
   } else {
@@ -317,13 +334,12 @@ async function deliverInvoice(user: User, invoiceId: string): Promise<string> {
 
   if (c.phone && !isDoNotText(c.phone)) {
     const first = !c.lastOutboundAt;
-    await sendSms(
-      c.phone,
-      `Hi ${c.name.split(" ")[0]}, here's invoice ${inv.number} from ${signature(user)} for $${inv.total.toFixed(2)}, due ${fmtDate(
-        user,
-        inv.dueDate,
-      )}. Pay here: ${inv.payUrl}${first ? "\nReply STOP to opt out." : ""}`,
-    );
+    const text = `Hi ${c.name.split(" ")[0]}, here's invoice ${inv.number} from ${signature(user)} for $${inv.total.toFixed(2)}, due ${fmtDate(
+      user,
+      inv.dueDate,
+    )}. Pay here: ${inv.payUrl}${first ? "\nReply STOP to opt out." : ""}`;
+    await sendSms(c.phone, text);
+    billing.recordCustomerText(user, text);
     c.lastOutboundAt = Date.now();
   }
   inv.status = "sent";
@@ -336,7 +352,7 @@ async function deliverInvoice(user: User, invoiceId: string): Promise<string> {
     contactId: c.id,
   });
   update(user);
-  return `Sent ${inv.number} to ${c.name}${c.email && stripe ? " (text + email)" : ""}. I'll tell you when it's paid and nudge you if it's late.`;
+  return `Sent ${inv.number} to ${c.name}${c.email && stripe && acct ? " (text + email)" : ""}. I'll tell you when it's paid and nudge you if it's late.`;
 }
 
 export function markInvoicePaid(user: User, invoiceId: string, via = "owner"): Invoice {
@@ -349,18 +365,25 @@ export function markInvoicePaid(user: User, invoiceId: string, via = "owner"): I
   return inv;
 }
 
-export async function handleStripeEvent(event: Stripe.Event, findOwner: (phone: string) => User | undefined) {
+// Events from owners' connected Stripe accounts (the Connect webhook endpoint).
+export async function handleConnectEvent(event: Stripe.Event, findOwner: (phone: string) => User | undefined) {
   if (event.type !== "invoice.paid") return;
   const si = event.data.object as Stripe.Invoice;
   const owner = si.metadata?.owner ? findOwner(si.metadata.owner) : undefined;
-  if (!owner || !si.metadata?.invoiceId) return;
+  // Only trust an invoice that came from the account this owner connected.
+  if (!owner || !si.metadata?.invoiceId || owner.billing.connectAccountId !== event.account) return;
   const inv = markInvoicePaid(owner, si.metadata.invoiceId, "stripe");
+  const fee = (si as unknown as { application_fee_amount?: number | null }).application_fee_amount ?? 0;
+  if (fee > 0) billing.recordInvoiceFee(owner, fee / 100);
   const c = owner.contacts.find((x) => x.id === inv.contactId);
-  if (!owner.optedOut) await sendSms(owner.phone, `💸 ${c?.name ?? "A customer"} paid ${inv.number} ($${inv.total.toFixed(2)}).`);
+  if (!owner.optedOut) {
+    const text = `💸 ${c?.name ?? "A customer"} paid ${inv.number} ($${inv.total.toFixed(2)}).`;
+    await sendSms(owner.phone, text);
+    billing.recordSms(owner, text);
+  }
 }
 
-export function verifyStripe(raw: Buffer, sig: string | undefined): Stripe.Event | null {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+export function verifyStripe(raw: Buffer, sig: string | undefined, secret: string | undefined): Stripe.Event | null {
   if (!stripe || !secret || !sig) return null;
   try {
     return stripe.webhooks.constructEvent(raw, sig, secret);

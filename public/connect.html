@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Connect your accounts · Macoma</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <style>
+    /* Layout: one glass sheet, three steps top to bottom: connect accounts, start the plan, get the first text. */
+    main { position: relative; z-index: 1; max-width: 680px; margin: 0 auto; padding-block: calc(env(safe-area-inset-top, 0px) + 28px) 40px; display: grid; gap: 18px; }
+    .head { display: flex; align-items: center; gap: 14px; }
+    .head h1 { font-size: clamp(26px, 5vw, 34px); line-height: 1.05; }
+    .sheet { border-radius: 30px; padding: 22px; display: grid; gap: 14px; }
+    .sheet h2 { font-size: 20px; display: flex; align-items: center; gap: 10px; }
+    .num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 700 13px/1 var(--sans); background: var(--ink); color: var(--ground); flex: none; }
+    .num.done { background: var(--ok); color: #fff; }
+    .sub { color: var(--muted); font-size: 15px; }
+    .list { display: grid; gap: 10px; }
+    .conn { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center; padding: 12px; border-radius: 18px; background: var(--glass-strong); border: 1px solid var(--glass-edge); }
+    .tile { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font: 700 18px/1 var(--round); color: #fff; }
+    .conn .txt { min-width: 0; display: grid; gap: 2px; }
+    .conn .name { font-weight: 600; font-size: 16px; }
+    .conn .blurb { color: var(--muted); font-size: 13.5px; }
+    .conn .state { font-size: 13px; color: var(--ok); }
+    .conn .soon { font-size: 12.5px; color: var(--muted); text-align: right; max-width: 130px; }
+    .conn button { white-space: nowrap; }
+    .btn-sm { display: inline-block; text-decoration: none; font: 600 14px/1 var(--sans); border-radius: 999px; padding: 10px 14px; cursor: pointer; border: 0; background: var(--blue); color: var(--blue-fg); }
+    .btn-line { font: 600 13px/1 var(--sans); border-radius: 999px; padding: 8px 12px; cursor: pointer; background: transparent; color: var(--muted); border: 1px solid var(--hairline); }
+    .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .plan { text-align: left; padding: 14px; border-radius: 18px; background: var(--glass-strong); border: 1px solid var(--glass-edge); cursor: pointer; color: var(--ink); font: inherit; display: grid; gap: 4px; }
+    .plan strong { font-size: 15px; }
+    .plan .p { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .plan .p small { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+    .plan span { font-size: 12.5px; color: var(--muted); }
+    .plan[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--blue); }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .banner { padding: 12px 14px; border-radius: 14px; font-size: 14.5px; }
+    .banner.err { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
+    .banner.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+    .done-card { text-align: center; justify-items: center; }
+    .done-card .faces { display: flex; }
+    .done-card .faces .face + .face { margin-left: -10px; }
+    @media (max-width: 560px) {
+      .plans { grid-template-columns: 1fr; }
+      .conn { grid-template-columns: 40px 1fr; }
+      .conn > :last-child { grid-column: 1 / -1; justify-self: start; }
+    }
+  </style>
+</head>
+<body>
+<div class="fields" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+<main>
+  <div class="head"><span data-face="biz" data-size="48"></span><div><h1>Connect your accounts</h1><p class="sub" id="who">So your assistants can see your day and get you paid.</p></div></div>
+  <div id="banner" hidden></div>
+
+  <section class="sheet glass" aria-labelledby="h1">
+    <h2 id="h1"><span class="num" id="n1">1</span>Connect what you use</h2>
+    <p class="sub">Each one is optional. Macoma only reads what it needs, and you can disconnect anytime here or by texting CONNECT.</p>
+    <div class="list" id="list"><p class="sub">Loading…</p></div>
+  </section>
+
+  <section class="sheet glass" aria-labelledby="h2">
+    <h2 id="h2"><span class="num" id="n2">2</span>Start your free trial</h2>
+    <p class="sub" id="trialText">14 days or 100 replies free, whichever comes first. Pay with Apple Pay or a card on the next screen. We text you 3 days before it converts, and you can cancel by texting CANCEL PLAN.</p>
+    <div class="plans" id="plans"></div>
+    <div class="row"><button class="cta" id="pay" type="button">Continue · Apple Pay or card</button><span class="fine" id="payNote"></span></div>
+  </section>
+
+  <section class="sheet glass" aria-labelledby="h3">
+    <h2 id="h3"><span class="num" id="n3">3</span>Get your first text</h2>
+    <p class="sub">That's it. Your assistant will text you from now on.</p>
+    <div class="row"><button class="cta" id="finish" type="button">Finish and text me</button></div>
+  </section>
+
+  <section class="sheet glass done-card" id="done" hidden>
+    <div class="faces"><span data-face="biz" data-size="48"></span><span data-face="fol" data-size="48"></span><span data-face="voi" data-size="48"></span></div>
+    <h2 style="justify-content:center">Check your messages.</h2>
+    <p class="sub">We just texted you. Save the contact and reply like you'd text an assistant. You can close this window.</p>
+  </section>
+</main>
+<footer class="site" style="max-width:680px"><a href="/terms" target="_blank">Terms</a><a href="/privacy" target="_blank">Privacy</a><span class="legal">Apple Pay is a trademark of Apple Inc. Payments are processed by Stripe.</span></footer>
+
+<script src="/faces.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const q = new URLSearchParams(location.search);
+  const t = q.get("t");
+  let plan = q.get("plan") || "business";
+  // Keep the token out of the address bar once read.
+  if (t) history.replaceState(null, "", location.pathname);
+
+  const banner = (text, kind) => { const b = $("banner"); b.hidden = !text; b.className = `banner ${kind}`; b.textContent = text || ""; };
+  if (q.get("error")) banner(q.get("error"), "err");
+  if (q.get("connected")) banner("Connected.", "ok");
+  if (q.get("paid") === "1") { banner("Your plan is set up. You won't be charged until the trial ends.", "ok"); $("n2").classList.add("done"); $("n2").textContent = "✓"; }
+
+  const COLORS = { google_calendar: "#4285f4", gmail: "#d93025", microsoft: "#0078d4", quickbooks: "#2ca01c", square: "#3e4348", stripe: "#635bff" };
+  const INITIAL = { google_calendar: "C", gmail: "M", microsoft: "O", quickbooks: "Q", square: "S", stripe: "S" };
+
+  async function api(url, opts) {
+    const res = await fetch(url, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Something went wrong.");
+    return data;
+  }
+  const post = (url, body) => api(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ t, ...body }) });
+
+  function render(data) {
+    $("who").textContent = `For the number ending ${data.phoneLast4}. So your assistants can see your day and get you paid.`;
+    const list = $("list");
+    list.replaceChildren();
+    for (const p of data.providers) {
+      const row = document.createElement("div");
+      row.className = "conn";
+      row.innerHTML = `<div class="tile" style="background:${COLORS[p.id] || "#555"}" aria-hidden="true">${INITIAL[p.id] || p.name[0]}</div>
+        <div class="txt"><span class="name"></span><span class="blurb"></span>${p.connected ? '<span class="state"></span>' : ""}</div><div></div>`;
+      row.querySelector(".name").textContent = p.name;
+      row.querySelector(".blurb").textContent = p.blurb;
+      if (p.connected) row.querySelector(".state").textContent = `Connected${p.label ? ` · ${p.label}` : ""}`;
+      const slot = row.lastElementChild;
+      if (p.connected) {
+        const b = document.createElement("button");
+        b.className = "btn-line"; b.type = "button"; b.textContent = "Disconnect";
+        b.addEventListener("click", async () => { b.disabled = true; try { await post(`/api/connect/${p.id}/disconnect`, {}); load(); } catch (e) { banner(e.message, "err"); b.disabled = false; } });
+        slot.append(b);
+      } else if (p.available) {
+        const a = document.createElement("a");
+        a.className = "btn-sm"; a.textContent = "Connect";
+        a.href = `/connect/${p.id}/start?t=${encodeURIComponent(t)}`;
+        slot.append(a);
+      } else {
+        const s = document.createElement("span");
+        s.className = "soon"; s.textContent = p.note || "Coming soon";
+        slot.append(s);
+      }
+      list.append(row);
+    }
+    if (data.providers.some((p) => p.connected)) { $("n1").classList.add("done"); $("n1").textContent = "✓"; }
+    if (data.billingStatus === "active") { $("n2").classList.add("done"); $("n2").textContent = "✓"; $("payNote").textContent = "Your plan is active."; }
+  }
+
+  async function load() {
+    if (!t) { banner("This link has expired. Text CONNECT to Macoma for a new one.", "err"); $("list").replaceChildren(); return; }
+    try { render(await api(`/api/connect/providers?t=${encodeURIComponent(t)}`)); }
+    catch (e) { banner(e.message, "err"); $("list").replaceChildren(); }
+  }
+
+  async function plans() {
+    const data = await api("/api/billing/plans");
+    $("trialText").textContent = `${data.trial.days} days or ${data.trial.replies} replies free, whichever comes first. Pay with Apple Pay or a card on the next screen. We text you 3 days before it converts, and you can cancel by texting CANCEL PLAN.`;
+    const box = $("plans");
+    box.replaceChildren();
+    for (const p of data.plans) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "plan"; b.setAttribute("aria-pressed", String(p.id === plan));
+      b.innerHTML = `<strong></strong><span class="p">$${p.priceUsd}<small> /mo</small></span><span></span>`;
+      b.querySelector("strong").textContent = p.name;
+      b.querySelector("span:last-child").textContent = `${p.replies} replies${p.customerTexts ? ` · ${p.customerTexts} customer texts` : ""}${p.invoiceFeePct ? ` · ${p.invoiceFeePct}% invoice fee` : ""}`;
+      b.addEventListener("click", () => { plan = p.id; box.querySelectorAll(".plan").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
+      box.append(b);
+    }
+  }
+
+  $("pay").addEventListener("click", async () => {
+    $("pay").disabled = true;
+    try {
+      const r = await post("/api/billing/checkout", { plan });
+      if (r.url) location.href = r.url;
+      else { $("payNote").textContent = r.message; $("n2").classList.add("done"); $("n2").textContent = "✓"; $("pay").disabled = false; }
+    } catch (e) { banner(e.message, "err"); $("pay").disabled = false; }
+  });
+
+  $("finish").addEventListener("click", async () => {
+    $("finish").disabled = true;
+    try {
+      await post("/api/connect/finish", {});
+      document.querySelectorAll("main > section:not(#done)").forEach((s) => (s.hidden = true));
+      $("done").hidden = false;
+      banner("", "ok");
+      window.scrollTo(0, 0);
+    } catch (e) { banner(e.message, "err"); $("finish").disabled = false; }
+  });
+
+  load();
+  plans().catch(() => {});
+})();
+</script>
+</body>
+</html>

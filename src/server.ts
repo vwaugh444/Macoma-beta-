@@ -5,6 +5,7 @@ import { runAgent } from "./agent.js";
 import { agentCard, a2aHandler } from "./a2a.js";
 import { a2aPaywall, walletAddress, NETWORK } from "./x402.js";
 import {
+  allUsers,
   createUser,
   deleteUser,
   getUser,
@@ -19,6 +20,9 @@ import {
 } from "./store.js";
 import { normalizePhone, sendSms, smsEnabled, verifyTwilio } from "./sms.js";
 import * as biz from "./business.js";
+import * as billing from "./billing.js";
+import { connectorRoutes, connectToken, connectUrl, connectedSummary, userFromToken } from "./connectors.js";
+import { stripeEnabled } from "./stripeClient.js";
 import { startScheduler } from "./scheduler.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -34,7 +38,7 @@ const HELP_WORDS = new Set(["HELP", "INFO"]);
 const YES_WORDS = new Set(["YES", "Y", "SEND", "CONFIRM", "OK", "AGREE"]);
 const NO_WORDS = new Set(["NO", "N", "DONT", "DON'T", "NEVERMIND"]);
 
-const HELP_TEXT = `Macoma: an AI assistant you text. Text anything to get started. Reply LOG to see recent actions, DELETE MY DATA to erase your account, STOP to opt out. Help: ${SUPPORT_EMAIL}. Msg & data rates may apply.`;
+const HELP_TEXT = `Macoma: an AI assistant you text. Reply PLAN for your usage, MORE for extra replies, CONNECT to link your calendar or Stripe, LOG for recent actions, CANCEL PLAN to stop billing, DELETE MY DATA to erase your account, STOP to opt out. Help: ${SUPPORT_EMAIL}. Msg & data rates may apply.`;
 const WELCOME_TEXT =
   "Hey, it's Macoma, your assistant. Text me like you'd text a sharp office manager: reminders, reorders, invoices, follow-ups, \"tell my 2pm I'm running late\". What should I call you, and what's your business (if you have one)?";
 const TERMS_PROMPT = `Hi, I'm Macoma, an AI assistant you text. To start, reply YES to confirm you're 18+ and agree to the Terms (${PUBLIC_URL}/terms) and SMS terms (${PUBLIC_URL}/sms-terms). Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out.`;
@@ -42,17 +46,79 @@ const TERMS_PROMPT = `Hi, I'm Macoma, an AI assistant you text. To start, reply 
 const app = express();
 app.set("trust proxy", true);
 
-// Stripe needs the raw body for signature checks, so it goes before express.json().
+// Texts to the owner are metered: every segment counts toward the margin rule.
+async function textOwner(user: User, body: string) {
+  await sendSms(user.phone, body);
+  billing.recordSms(user, body);
+}
+
+// Stripe needs the raw body for signature checks, so these go before express.json().
+// Macoma's own billing: subscriptions, trials, reply packs.
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  const event = biz.verifyStripe(req.body, req.header("stripe-signature"));
+  const event = biz.verifyStripe(req.body, req.header("stripe-signature"), process.env.STRIPE_WEBHOOK_SECRET);
   if (!event) return res.status(400).send("bad signature");
   res.json({ received: true });
-  await biz.handleStripeEvent(event, getUser).catch((err) => console.error("stripe event", err));
+  try {
+    const note = await billing.handleBillingEvent(event);
+    const owner = billing.billingOwnerFor(event);
+    if (note && owner && !owner.optedOut) await textOwner(owner, note);
+  } catch (err) {
+    console.error("stripe billing event", err);
+  }
+});
+
+// Owners' connected Stripe accounts: invoice paid → tell the owner, count the platform fee.
+app.post("/stripe/connect-webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const event = biz.verifyStripe(req.body, req.header("stripe-signature"), process.env.STRIPE_CONNECT_WEBHOOK_SECRET);
+  if (!event) return res.status(400).send("bad signature");
+  res.json({ received: true });
+  await biz.handleConnectEvent(event, getUser).catch((err) => console.error("stripe connect event", err));
 });
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static("public", { extensions: ["html"] }));
+
+// The first text arrives when the owner finishes the connect window, or 15 minutes after
+// they verified if they close it early.
+async function sendWelcome(user: User) {
+  if (user.welcomeSentAt || user.optedOut || user.status !== "active") return;
+  user.welcomeSentAt = Date.now();
+  update(user);
+  const linked = Object.keys(user.connections).length ? ` I can see your ${connectedSummary(user)}.` : "";
+  await textOwner(user, WELCOME_TEXT + linked).catch((err) => console.error("welcome sms failed", err));
+}
+app.use(connectorRoutes(sendWelcome));
+
+// Plan checkout from the connect window. Stripe Checkout shows Apple Pay on Apple devices.
+app.post("/api/billing/checkout", async (req, res) => {
+  const user = userFromToken(req.body?.t);
+  if (!user) return res.status(401).json({ error: "This link expired. Text CONNECT to get a new one." });
+  const plan = String(req.body?.plan ?? "") as keyof typeof billing.PLANS;
+  if (!billing.PLANS[plan]) return res.status(400).json({ error: "Pick a plan." });
+  user.billing.plan = plan;
+  update(user);
+  if (!stripeEnabled) return res.json({ url: null, message: "Billing isn't switched on yet. Your free trial is running." });
+  try {
+    res.json({ url: await billing.planLink(user, plan, `/connect.html?t=${connectToken(user.phone)}&paid=1`) });
+  } catch (err) {
+    console.error("checkout", err);
+    res.status(502).json({ error: "Checkout is unavailable right now. Try again in a minute." });
+  }
+});
+
+app.get("/api/billing/plans", (_req, res) => {
+  res.json({
+    trial: { days: billing.TRIAL.days, replies: billing.TRIAL.replies },
+    plans: Object.values(billing.PLANS).map(({ id, name, priceUsd, replies, customerTexts, seats, invoiceFeePct }) => ({ id, name, priceUsd, replies, customerTexts, seats, invoiceFeePct })),
+    pack: billing.PACK,
+  });
+});
+setInterval(() => {
+  for (const u of allUsers()) {
+    if (!u.welcomeSentAt && u.verifiedAt && Date.now() - u.verifiedAt > 15 * 60 * 1000) void sendWelcome(u);
+  }
+}, 60_000);
 
 // --- Join (web): number → one-time code → active ------------------------------
 
@@ -114,9 +180,16 @@ app.post("/api/verify", async (req, res) => {
   if (isNew || !user.consent) recordConsent(user, { at: Date.now(), ip: req.ip ?? null, via: "web", termsVersion: TERMS_VERSION, ageConfirmed: true });
   user.status = "active";
   user.optedOut = false;
+  user.verifiedAt ??= Date.now();
   update(user);
-  if (isNew) await sendSms(user.phone, WELCOME_TEXT).catch((err) => console.error("welcome sms failed", err));
-  res.json({ shareUrl: `${PUBLIC_URL}/?ref=${user.code}`, referrals: referralCount(user.code), agentNumber: AGENT_NUMBER, isNew });
+  if (isNew) billing.startTrial(user);
+  res.json({
+    shareUrl: `${PUBLIC_URL}/?ref=${user.code}`,
+    referrals: referralCount(user.code),
+    agentNumber: AGENT_NUMBER,
+    isNew,
+    connectUrl: `/connect.html?t=${connectToken(user.phone)}`,
+  });
 });
 
 // --- Inbound SMS (Twilio webhook) ---------------------------------------------
@@ -129,8 +202,9 @@ function enqueue(phone: string, job: () => Promise<void>) {
 }
 
 async function handleOwner(user: User, text: string) {
-  const word = text.toUpperCase().replace(/[.!]+$/, "");
-  const reply = (body: string) => sendSms(user.phone, body);
+  const word = text.toUpperCase().replace(/[.!]+$/, "").trim();
+  const reply = (body: string) => textOwner(user, body);
+  billing.recordSms(user, text); // inbound segments cost money too
 
   if (STOP_WORDS.has(word)) {
     user.optedOut = true;
@@ -149,8 +223,11 @@ async function handleOwner(user: User, text: string) {
     if (!YES_WORDS.has(word)) return reply(TERMS_PROMPT);
     recordConsent(user, { at: Date.now(), ip: null, via: "sms", termsVersion: TERMS_VERSION, ageConfirmed: true });
     user.status = "active";
+    user.verifiedAt = Date.now();
     update(user);
-    return reply(WELCOME_TEXT);
+    billing.startTrial(user);
+    await sendWelcome(user);
+    return reply(`Want me to see your calendar or send invoices you get paid for by Apple Pay? Connect your accounts here (link works for 30 min): ${connectUrl(user)}`);
   }
 
   if (user.pending && YES_WORDS.has(word)) return reply(await biz.confirmPending(user, () => deleteUser(user.phone)));
@@ -159,12 +236,26 @@ async function handleOwner(user: User, text: string) {
     return reply(what ? `Cancelled: ${what}` : "Nothing to cancel.");
   }
   if (word === "LOG" || word === "ACTIONS") return reply(biz.recentActions(user));
+  if (word === "PLAN" || word === "USAGE") return reply(billing.describeUsage(user));
+  if (word === "CONNECT") return reply(`Connect your calendar, Stripe, QuickBooks or Square here (link works for 30 min): ${connectUrl(user)}`);
+  if (word === "MORE") return reply(`Here's a pack of ${billing.PACK.replies} replies for $${billing.PACK.priceUsd}. Apple Pay works on the checkout page: ${await billing.packLink(user)}`);
+  if (word === "UPGRADE") {
+    const next = user.billing.plan === "personal" ? "business" : "crew";
+    const p = billing.PLANS[next];
+    return reply(`${p.name}: $${p.priceUsd}/mo, ${p.replies} replies, ${p.customerTexts} customer texts. Switch here (Apple Pay works): ${await billing.planLink(user, next, "/thanks.html?")}`);
+  }
+  if (word === "CANCEL PLAN") return reply(await billing.cancelPlan(user));
+  if (word === "START PLAN" || word === "RESUME PLAN") return reply(await billing.resumePlan(user));
   if (word === "DELETE MY DATA" || word === "DELETE ACCOUNT") {
     biz.propose(user, "delete_account", "Delete account and all data", {});
     return reply("This permanently deletes your contacts, reminders, invoices and history. Reply YES to confirm or NO to keep everything.");
   }
 
-  return reply(await runAgent(text, { kind: "sms", user }));
+  const g = await billing.gate(user);
+  if (!g.ok) return reply(g.message);
+  const answer = await runAgent(text, { kind: "sms", user }, g.model);
+  await billing.recordReply(user);
+  return reply(g.notice ? `${answer}\n\n${g.notice}` : answer);
 }
 
 // A customer or lead texting back after we messaged them on an owner's behalf.
@@ -186,7 +277,7 @@ async function handleContactReply(phone: string, text: string): Promise<boolean>
   const { owner, contact } = match;
   contact.lastInboundAt = Date.now();
   biz.logAction(owner, { type: "contact_reply", summary: `${contact.name} replied: ${text.slice(0, 120)}`, status: "done" });
-  if (!owner.optedOut) await sendSms(owner.phone, `💬 ${contact.name} (${contact.kind}) replied:\n"${text}"\nWant me to answer?`);
+  if (!owner.optedOut) await textOwner(owner, `💬 ${contact.name} (${contact.kind}) replied:\n"${text}"\nWant me to answer?`);
   return true;
 }
 
@@ -230,7 +321,7 @@ startScheduler();
 app.listen(PORT, () => {
   console.log(`Macoma listening on ${PUBLIC_URL}`);
   console.log(`  SMS:     ${smsEnabled ? `Twilio ${AGENT_NUMBER}` : "console (dev mode). POST /sms with From & Body to simulate"}`);
-  console.log(`  Stripe:  ${biz.stripeEnabled ? "invoices via Stripe" : "off (invoices use the owner's payment link)"}`);
+  console.log(`  Stripe:  ${biz.stripeEnabled ? "billing + Connect invoices" : "off (no billing; invoices use the owner's payment link)"}`);
   console.log(`  A2A:     ${PUBLIC_URL}/.well-known/agent-card.json ${paywall ? `(paid, ${process.env.A2A_PRICE ?? "$0.01"})` : "(free)"}`);
   console.log(`  x402:    ${walletAddress ? `agent wallet ${walletAddress} on ${NETWORK}` : "no agent wallet; paid calls disabled"}`);
 });

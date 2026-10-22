@@ -2,162 +2,540 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Macoma</title>
-  <meta name="description" content="The office manager you text. Reminders, reorders, invoices and follow-ups for people who run a business from their phone.">
+  <meta name="description" content="The office manager you text. Invoices paid with Apple Pay, reorders, lead follow-ups and running-late texts for people who run a business from their phone.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <script>document.documentElement.classList.add("js")</script>
   <style>
-    :root { --bg: #f6f4ef; --fg: #141414; --muted: #75716a; --line: #d9d5cc; --accent: #141414; --accent-fg: #f6f4ef; --err: #b43c0c; }
-    @media (prefers-color-scheme: dark) {
-      :root { --bg: #0e0e0e; --fg: #eeebe4; --muted: #8b877f; --line: #2a2926; --accent: #eeebe4; --accent-fg: #0e0e0e; --err: #f08a5d; }
+    /* Layout: a scroll path. Each service is a scene whose phone slides in as you arrive and out as you leave;
+       a rail on the side fills as you move toward the number form at the bottom. */
+    nav.top { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); z-index: 5; margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 8px 8px 18px; border-radius: 999px; }
+    .logo { display: flex; align-items: center; gap: 8px; font: 700 19px/1 var(--round); text-decoration: none; letter-spacing: -0.02em; }
+    .cta.sm { padding: 10px 16px; font-size: 15px; }
+
+    .hero { display: grid; grid-template-columns: 1.1fr .9fr; gap: 40px; align-items: center; padding-block: 64px 48px; }
+    .hero-copy { min-width: 0; display: grid; gap: 22px; justify-items: start; }
+    .hero h1 { font-size: clamp(44px, 7vw, 80px); line-height: 1.0; font-weight: 700; }
+    .hero h1 em { font-style: normal; background: linear-gradient(90deg, var(--blue), var(--fol)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lede { font-size: 20px; color: var(--muted); max-width: 44ch; }
+
+    /* path rail */
+    .rail { position: fixed; z-index: 4; left: max(16px, env(safe-area-inset-left, 0px)); top: 50%; transform: translateY(-50%); display: grid; gap: 4px; padding: 10px 8px; border-radius: 20px; }
+    .rail a { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 600 12px/1 var(--sans); color: var(--muted); padding: 7px 8px; border-radius: 12px; }
+    .rail a i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--muted); flex: none; transition: background .25s, border-color .25s; }
+    .rail a.done i { background: var(--blue); border-color: var(--blue); }
+    .rail a.here { color: var(--ink); background: var(--glass-strong); }
+    .rail .bar { position: absolute; left: 20px; top: 26px; bottom: 26px; width: 2px; background: var(--hairline); z-index: -1; }
+    .rail .bar b { display: block; width: 100%; height: 100%; background: var(--blue); transform-origin: top; transform: scaleY(var(--p, 0)); }
+    /* Full labels on wide screens, dots only on laptops, the top bar alone on tablets and phones. */
+    @media (max-width: 1519px) {
+      .rail { padding: 8px 4px; }
+      .rail a { font-size: 0; gap: 0; padding: 7px; }
+      .rail .bar { left: 16px; }
     }
-    * { box-sizing: border-box; }
-    html, body { min-height: 100%; margin: 0; }
-    body {
-      background: var(--bg); color: var(--fg);
-      font: 17px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-      display: grid; place-items: center; padding: 32px 16px;
-    }
-    main { width: 100%; max-width: 400px; }
-    h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 6px; }
-    p.lede { color: var(--muted); margin: 0 0 20px; }
-    ul.eg { list-style: none; padding: 0; margin: 0 0 28px; color: var(--muted); font-size: 15px; }
-    ul.eg li { padding: 6px 0; border-top: 1px solid var(--line); }
-    ul.eg li:last-child { border-bottom: 1px solid var(--line); }
-    form { display: grid; gap: 10px; }
-    .row { display: flex; gap: 8px; }
-    input[type=tel], input[type=text], input.code {
-      flex: 1; min-width: 0; font: inherit; color: inherit; background: transparent;
-      border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
-    }
-    input:focus { outline: none; border-color: var(--fg); }
-    input.code { letter-spacing: .3em; font-variant-numeric: tabular-nums; }
-    label.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--muted); }
-    label.check input { margin-top: 3px; accent-color: var(--accent); }
-    a { color: inherit; }
-    button, a.btn {
-      font: inherit; font-weight: 500; border: 0; border-radius: 10px; padding: 12px 16px;
-      background: var(--accent); color: var(--accent-fg); cursor: pointer; text-decoration: none; white-space: nowrap;
-    }
-    button:disabled { opacity: .5; cursor: default; }
-    .ghost { background: transparent !important; color: var(--fg) !important; border: 1px solid var(--line) !important; }
-    .fine { color: var(--muted); font-size: 12.5px; margin: 4px 0 0; }
-    .err { color: var(--err); font-size: 14px; min-height: 20px; }
+    @media (max-width: 1240px) { .rail { display: none; } }
+    .topbar { position: fixed; z-index: 6; left: 0; right: 0; top: 0; height: 3px; background: transparent; }
+    .topbar b { display: block; height: 100%; background: var(--blue); transform-origin: left; transform: scaleX(var(--p, 0)); }
+
+    .section-head { display: grid; gap: 10px; padding-block: 8px 24px; }
+    .section-head h2 { font-size: clamp(32px, 4.6vw, 52px); font-weight: 700; line-height: 1.04; }
+
+    .roster { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; padding-bottom: 72px; }
+    .agent { border-radius: 28px; padding: 24px; display: grid; gap: 12px; align-content: start; }
+    .agent h3 { font-size: 22px; font-weight: 700; }
+    .agent p { color: var(--muted); font-size: 15.5px; }
+    .chip { justify-self: start; font: 600 12px/1 var(--sans); padding: 6px 10px; border-radius: 999px; background: var(--glass-strong); border: 1px solid var(--glass-edge); color: var(--muted); }
+
+    .scene { display: grid; grid-template-columns: 1fr minmax(0, 330px); gap: 44px; align-items: center; padding: 36px; border-radius: 36px; margin-bottom: 26px; }
+    .scene.flip { grid-template-columns: minmax(0, 330px) 1fr; }
+    .scene.flip .copy { order: 2; }
+    .copy { display: grid; gap: 14px; min-width: 0; max-width: 50ch; }
+    .who-row { display: flex; align-items: center; gap: 10px; }
+    .copy h3 { font-size: clamp(26px, 3.2vw, 36px); font-weight: 700; line-height: 1.08; }
+    .copy p { color: var(--muted); }
+    .says { justify-self: start; max-width: 100%; background: var(--blue); color: var(--blue-fg) !important; padding: 9px 14px; border-radius: 20px; border-bottom-right-radius: 6px; font-size: 16px; }
+
+    /* in and out of the way: phones arrive from the side and leave upward */
+    .js .scene .player, .js .scene .copy { transition: transform .8s cubic-bezier(.2,.8,.2,1), opacity .8s; }
+    .js .scene:not(.in) .player { transform: translateX(70px) rotate(4deg) scale(.94); opacity: .25; }
+    .js .scene.flip:not(.in) .player { transform: translateX(-70px) rotate(-4deg) scale(.94); opacity: .25; }
+    .js .scene:not(.in) .copy { transform: translateY(24px); opacity: .5; }
+    .js .scene.past .player { transform: translateY(-50px) scale(.92); opacity: .35; }
+    @media (prefers-reduced-motion: reduce) { .js .scene .player, .js .scene .copy { transition: none; transform: none !important; opacity: 1 !important; } }
+
+    /* phone + iOS thread */
+    .player { display: grid; gap: 12px; justify-items: center; min-width: 0; }
+    .phone { width: min(320px, 100%); max-width: 100%; aspect-ratio: 9 / 19.2; background: var(--frame); border-radius: 50px; padding: 10px; position: relative; box-shadow: inset 0 0 0 2px rgba(255,255,255,.08), 0 40px 70px -34px rgba(10, 20, 50, .55); }
+    .screen { position: relative; height: 100%; border-radius: 41px; overflow: hidden; background: var(--screen); display: flex; flex-direction: column; }
+    .island { position: absolute; top: 9px; left: 50%; transform: translateX(-50%); width: 92px; height: 26px; border-radius: 20px; background: #000; z-index: 3; }
+    .status { display: flex; justify-content: space-between; align-items: center; padding: 13px 24px 0 28px; height: 40px; font: 600 13px/1 var(--sans); color: var(--ink); position: relative; z-index: 2; }
+    .status .icons { display: flex; gap: 4px; align-items: center; }
+    .status .icons b { display: block; width: 3px; border-radius: 1px; background: currentColor; }
+    .status .batt { width: 22px; height: 11px; border: 1.5px solid currentColor; border-radius: 3px; padding: 1px; }
+    .status .batt::after { content: ""; display: block; height: 100%; width: 75%; background: currentColor; border-radius: 1px; }
+    .chathead { position: relative; z-index: 2; display: grid; grid-template-columns: 28px 1fr 28px; align-items: center; padding: 4px 10px 8px; border-bottom: 1px solid var(--hairline); background: var(--glass-strong); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); }
+    .chathead .back { width: 12px; height: 20px; color: var(--blue); }
+    .chathead .mid { display: grid; justify-items: center; gap: 3px; }
+    .chathead .name { font: 500 11px/1 var(--sans); color: var(--ink); }
+    .chathead .name::after { content: " ›"; color: var(--meta); }
+    .chathead .vid { width: 22px; height: 16px; color: var(--blue); justify-self: end; }
+    .thread { flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 8px 10px 6px; gap: 2px; font-size: 14px; line-height: 1.3; }
+    .inputbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px 22px; }
+    .inputbar .plus { width: 28px; height: 28px; border-radius: 50%; background: var(--gray-bubble); color: var(--meta); display: grid; place-items: center; font-size: 20px; }
+    .inputbar .box { flex: 1; height: 30px; border-radius: 15px; border: 1px solid var(--hairline); display: flex; align-items: center; padding: 0 10px; color: var(--meta); font-size: 13.5px; }
+    .stamp { align-self: center; color: var(--meta); font-size: 10.5px; padding: 10px 0 4px; }
+    .stamp b { font-weight: 600; }
+    .b { position: relative; max-width: 76%; padding: 7px 12px; border-radius: 18px; white-space: pre-line; overflow-wrap: anywhere; margin-top: 2px; }
+    .b.me { align-self: flex-end; background: var(--blue); color: var(--blue-fg); }
+    .b.bot { align-self: flex-start; background: var(--gray-bubble); color: var(--gray-fg); }
+    .b.gap { margin-top: 8px; }
+    .b.tail::before, .b.tail::after { content: ""; position: absolute; bottom: 0; height: 18px; }
+    .b.tail.me::before { right: -7px; width: 20px; background: var(--blue); border-bottom-left-radius: 16px 14px; }
+    .b.tail.me::after { right: -26px; width: 26px; background: var(--screen); border-bottom-left-radius: 10px; }
+    .b.tail.bot::before { left: -7px; width: 20px; background: var(--gray-bubble); border-bottom-right-radius: 16px 14px; }
+    .b.tail.bot::after { left: -26px; width: 26px; background: var(--screen); border-bottom-right-radius: 10px; }
+    .receipt { align-self: flex-end; color: var(--meta); font-size: 10.5px; padding: 2px 4px 0; }
+    .b .inv { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; margin: 6px 0 2px; padding: 8px 10px; border-radius: 12px; background: var(--screen); font-size: 12.5px; }
+    .b .inv span:nth-child(even) { text-align: right; font-variant-numeric: tabular-nums; }
+    .b .inv .tot { font-weight: 600; border-top: 1px solid var(--hairline); padding-top: 4px; }
+    .paycard { align-self: flex-start; width: 78%; border-radius: 18px; overflow: hidden; background: var(--gray-bubble); color: var(--gray-fg); margin-top: 8px; }
+    .paycard .top { padding: 10px 12px 8px; font-size: 12.5px; }
+    .paycard .top strong { display: block; font-size: 17px; }
+    .paycard .pay { display: block; margin: 0 10px 10px; padding: 8px; text-align: center; border-radius: 9px; background: #000; color: #fff; font: 600 13px/1 var(--sans); }
+    .wallet-note { align-self: center; display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--meta); padding: 8px 0 2px; }
+    .wallet-note i { width: 14px; height: 10px; border-radius: 2px; background: linear-gradient(180deg, #ff9f0a 0 33%, #30d158 33% 66%, #0a84ff 66%); }
+    .voice { display: flex; align-items: center; gap: 8px; }
+    .voice svg { width: 10px; height: 12px; fill: currentColor; flex: none; }
+    .voice .wave { display: flex; align-items: center; gap: 2px; height: 18px; }
+    .voice .wave b { width: 2.5px; border-radius: 2px; background: currentColor; }
+    .typing { align-self: flex-start; background: var(--gray-bubble); border-radius: 18px; padding: 10px 12px; display: flex; gap: 4px; margin-top: 8px; }
+    .typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--meta); animation: blink 1.1s infinite; }
+    .typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: .3; } 40% { opacity: 1; } }
+    .pop { animation: pop .32s cubic-bezier(.2, .9, .3, 1.2); }
+    @keyframes pop { from { transform: translateY(8px) scale(.94); opacity: .2; } to { transform: none; opacity: 1; } }
+    .controls { width: min(300px, 100%); display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 8px 12px 8px 8px; border-radius: 999px; }
+    .pp { width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--ink); color: var(--ground); cursor: pointer; display: grid; place-items: center; padding: 0; }
+    .pp svg { width: 11px; height: 11px; fill: currentColor; }
+    .track { height: 4px; border-radius: 2px; background: var(--hairline); overflow: hidden; }
+    .track b { display: block; height: 100%; width: 100%; background: var(--ink); transform-origin: left; }
+    .tc { font: 500 12px/1 var(--sans); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-block: 40px 22px; }
+    .plan { border-radius: 28px; padding: 24px; display: grid; gap: 10px; align-content: start; }
+    .plan h3 { font-size: 20px; }
+    .plan .price { font-size: 38px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+    .plan .price small { font-size: 15px; font-weight: 500; color: var(--muted); }
+    .plan ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 15px; display: grid; gap: 4px; }
+    .plan.pick { box-shadow: inset 0 0 0 2px var(--blue), 0 18px 50px -24px var(--glass-shade); }
+
+    .promises { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-block: 22px 40px; }
+    .promise { border-radius: 26px; padding: 22px; display: grid; gap: 6px; }
+    .promise h3 { font-size: 18px; }
+    .promise p { color: var(--muted); font-size: 15px; }
+    .promise kbd { font: 600 12.5px/1 var(--sans); background: var(--blue); color: var(--blue-fg); padding: 3px 8px; border-radius: 10px; }
+
+    .start { display: grid; justify-items: center; gap: 18px; padding: 48px 24px; border-radius: 40px; margin-bottom: 30px; text-align: center; scroll-margin-top: 90px; }
+    .start .faces { display: flex; }
+    .start .faces .face { border: 3px solid var(--glass-edge); }
+    .start .faces .face + .face { margin-left: -12px; }
+    .start h2 { font-size: clamp(32px, 5vw, 56px); font-weight: 700; line-height: 1.02; }
+    .start form { width: min(460px, 100%); display: grid; gap: 12px; }
     .step { display: none; }
-    .step.on { display: block; }
-    .link { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; font-size: 14px; }
-    footer { margin-top: 32px; font-size: 13px; color: var(--muted); display: flex; gap: 16px; }
+    .step.on { display: grid; gap: 12px; justify-items: center; }
+    .code-input { letter-spacing: .4em; font-variant-numeric: tabular-nums; text-align: center; }
+    .linkbtn { background: none; border: 0; color: var(--muted); text-decoration: underline; font-size: 14px; cursor: pointer; }
+    .share { display: flex; gap: 8px; width: min(460px, 100%); }
+    .share input { flex: 1; min-width: 0; font: 500 15px/1 var(--sans); color: var(--ink); background: var(--glass-strong); border: 1px solid var(--glass-edge); border-radius: 14px; padding: 12px 14px; }
+
+    @media (max-width: 860px) {
+      .hero { grid-template-columns: 1fr; padding-block: 40px; }
+      .roster, .promises, .plans { grid-template-columns: 1fr; }
+      .scene, .scene.flip { grid-template-columns: 1fr; padding: 24px 18px; gap: 28px; }
+      .scene.flip .copy { order: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) { .pop, .typing i { animation: none; } }
   </style>
 </head>
 <body>
-<main>
-  <section id="s1" class="step on">
-    <h1>The office manager you text.</h1>
-    <p class="lede" id="lede">Macoma is an AI assistant that lives in your messages. It's for everyone, and it's especially good if you run a business from your phone.</p>
-    <ul class="eg">
-      <li>"Remind me to reorder cups every other Monday."</li>
-      <li>"Tell my 2pm I'm running 15 late."</li>
-      <li>"Invoice Dana $450 for the deck stain, due Friday."</li>
-      <li>"If the Patel lead doesn't answer by Thursday, nudge me."</li>
-    </ul>
-    <form id="f1">
-      <div class="row">
-        <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 555-0100" required aria-label="Mobile number">
-        <button id="b1" type="submit">Text me</button>
-      </div>
-      <label class="check"><input id="age" type="checkbox" required> I'm 18 or older.</label>
-      <label class="check"><input id="agree" type="checkbox" required>
-        <span>I agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and to get texts from Macoma at this number. These include sign-in codes, a welcome text, replies to my messages, and the reminders I set. Some may be sent automatically. How often depends on how I use it. Msg &amp; data rates may apply. Reply STOP to cancel or HELP for help. See the <a href="/sms-terms" target="_blank">SMS terms</a>.</span>
-      </label>
-      <div class="err" id="e1" role="alert"></div>
-    </form>
-  </section>
+<div class="fields" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+<div class="topbar" aria-hidden="true"><b></b></div>
 
-  <section id="s2" class="step">
-    <h1>Enter your code.</h1>
-    <p class="lede">We texted a 6-digit code to <span id="sentTo"></span>.</p>
-    <form id="f2">
-      <div class="row">
-        <input id="code" class="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" required aria-label="6-digit code">
-        <button id="b2" type="submit">Verify</button>
-      </div>
-      <div class="err" id="e2" role="alert"></div>
-      <div><button type="button" class="link" id="back">Use a different number</button></div>
-    </form>
-  </section>
+<nav class="rail glass" aria-label="Your path">
+  <div class="bar"><b></b></div>
+  <a href="#top" data-stop="top" title="See it"><i></i>See it</a>
+  <a href="#meet" data-stop="meet" title="Meet them"><i></i>Meet them</a>
+  <a href="#watch" data-stop="watch" title="Watch them work"><i></i>Watch them work</a>
+  <a href="#plans" data-stop="plans" title="Pick a plan"><i></i>Pick a plan</a>
+  <a href="#start" data-stop="start" title="Your number"><i></i>Your number</a>
+</nav>
 
-  <section id="s3" class="step">
-    <h1 id="doneTitle">Check your texts.</h1>
-    <p class="lede" id="doneLede">Macoma just said hi. Reply like you'd text a sharp assistant.</p>
-    <p style="margin:0 0 6px">Your invite link</p>
-    <div class="row">
-      <input id="link" type="text" readonly aria-label="Your invite link">
-      <button id="copy" type="button">Copy</button>
+<div class="wrap">
+  <nav class="top glass" aria-label="Macoma">
+    <a class="logo" href="#top"><span data-face="biz" data-size="26"></span>Macoma</a>
+    <a class="cta sm" href="#start">Get started</a>
+  </nav>
+
+  <header class="hero" id="top">
+    <div class="hero-copy">
+      <p class="eyebrow">For people who run a business from their phone</p>
+      <h1>The office manager you <em>text.</em></h1>
+      <p class="lede" id="lede">Three assistants in your messages send invoices your customers pay with Apple Pay, remember reorders, chase leads and tell your 2pm you're running late. You just reply.</p>
+      <a class="cta big" href="#start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3C6.5 3 2 6.8 2 11.5c0 2.6 1.4 4.9 3.6 6.5-.2 1.3-.9 2.6-2 3.5 2 0 3.8-.6 5.2-1.7 1 .3 2.1.4 3.2.4 5.5 0 10-3.8 10-8.5S17.5 3 12 3z"/></svg>Start free for 14 days</a>
+      <p class="fine">No app. No password. Cancel by texting CANCEL PLAN.</p>
     </div>
-    <div class="row" style="margin-top:8px">
-      <button id="native" type="button" class="ghost" hidden>Share…</button>
-      <a id="sms" class="btn ghost" hidden>Open messages</a>
+    <div class="player" data-scene="brief" aria-label="Example: the morning brief"></div>
+  </header>
+
+  <section id="meet" aria-labelledby="meet-h">
+    <div class="section-head">
+      <p class="eyebrow">Meet your assistants</p>
+      <h2 id="meet-h">Three faces in your contacts. One for each job.</h2>
     </div>
-    <p class="fine" id="count"></p>
+    <div class="roster">
+      <article class="agent glass"><span data-face="biz" data-size="64"></span><h3>Business Assistant</h3><p>Invoices with Apple Pay links, reorders and your 8am brief. Keeps track of what you're owed.</p><span class="chip">Yellow · Smile</span></article>
+      <article class="agent glass"><span data-face="fol" data-size="64"></span><h3>Follow-up Assistant</h3><p>Running-late texts, lead check-ins and customer replies. Nudges you before a quote goes cold.</p><span class="chip">Blue · Wink</span></article>
+      <article class="agent glass"><span data-face="voi" data-size="64"></span><h3>Voice Assistant</h3><p>Send a voice note from the truck. It turns what you said into reminders, drafts and invoices.</p><span class="chip">Green · Coming soon</span></article>
+    </div>
   </section>
 
-  <footer><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/sms-terms">SMS terms</a></footer>
-</main>
+  <section id="watch" aria-labelledby="watch-h">
+    <div class="section-head">
+      <p class="eyebrow">Watch them work</p>
+      <h2 id="watch-h">The jobs that slip every week.</h2>
+    </div>
+
+    <article class="scene glass">
+      <div class="copy">
+        <div class="who-row"><span data-face="fol" data-size="30"></span><span class="eyebrow">Follow-up Assistant</span></div>
+        <h3>Your 2pm hears from you before they wonder.</h3>
+        <p class="says">running 15 late to the Johnson job</p>
+        <p>It checks your calendar, drafts a friendly heads-up, sends it when you say yes, and shows you the reply.</p>
+      </div>
+      <div class="player" data-scene="late" aria-label="Example: running late"></div>
+    </article>
+
+    <article class="scene glass flip">
+      <div class="copy">
+        <div class="who-row"><span data-face="biz" data-size="30"></span><span class="eyebrow">Business Assistant</span></div>
+        <h3>Invoice from the driveway. Paid with Apple Pay.</h3>
+        <p class="says">invoice Dana $450 for the deck stain, due Friday</p>
+        <p>Dana gets a link she pays in one tap. The money goes to your Stripe account and you get a text when it lands.</p>
+      </div>
+      <div class="player" data-scene="invoice" aria-label="Example: invoice paid with Apple Pay"></div>
+    </article>
+
+    <article class="scene glass">
+      <div class="copy">
+        <div class="who-row"><span data-face="fol" data-size="30"></span><span class="eyebrow">Follow-up Assistant</span></div>
+        <h3>The quote doesn't go cold.</h3>
+        <p class="says">if the Patels don't answer by Thursday, nudge me</p>
+        <p>It only checks in if they haven't replied, and drafts the message so all you do is say yes.</p>
+      </div>
+      <div class="player" data-scene="lead" aria-label="Example: lead follow-up"></div>
+    </article>
+
+    <article class="scene glass flip">
+      <div class="copy">
+        <div class="who-row"><span data-face="biz" data-size="30"></span><span class="eyebrow">Business Assistant</span></div>
+        <h3>Never run out mid-job.</h3>
+        <p class="says">remind me to order stain every other Monday at 9</p>
+        <p>Repeats on your schedule and remembers what you ordered last time.</p>
+      </div>
+      <div class="player" data-scene="reorder" aria-label="Example: reorder reminder"></div>
+    </article>
+  </section>
+
+  <section id="plans" aria-labelledby="plans-h">
+    <div class="section-head">
+      <p class="eyebrow">Plans</p>
+      <h2 id="plans-h">Free for 14 days. Then pick what fits.</h2>
+      <p class="fine">Pay with Apple Pay or a card. Every plan has a monthly allowance, so you'll never get a surprise bill.</p>
+    </div>
+    <div class="plans">
+      <article class="plan glass" data-plan="personal"><h3>Personal</h3><p class="price">$19<small> /month</small></p><ul><li>150 assistant replies</li><li>Reminders and morning brief</li><li>Business Assistant</li></ul><button class="ghost" type="button">Choose Personal</button></article>
+      <article class="plan glass pick" data-plan="business"><h3>Business</h3><p class="price">$59<small> /month</small></p><ul><li>400 assistant replies</li><li>300 texts to your customers</li><li>Invoices with Apple Pay, 1% fee when paid</li><li>All three assistants</li></ul><button class="ghost" type="button">Choose Business</button></article>
+      <article class="plan glass" data-plan="crew"><h3>Crew</h3><p class="price">$149<small> /month</small></p><ul><li>1,000 assistant replies</li><li>800 texts to your customers</li><li>3 team members, 0.5% invoice fee</li></ul><button class="ghost" type="button">Choose Crew</button></article>
+    </div>
+    <p class="fine" style="text-align:center">Need more? Reply MORE for 200 extra replies ($20). Extra team member $25/month.</p>
+  </section>
+
+  <section class="promises" aria-label="What we promise">
+    <div class="promise glass"><h3>You approve every send</h3><p>Nothing reaches a customer until you reply <kbd>YES</kbd>. Text <kbd>LOG</kbd> to see everything it did.</p></div>
+    <div class="promise glass"><h3>Customers stay in control</h3><p>Anyone can reply <kbd>STOP</kbd> and never hear from Macoma again. No texts after 9pm.</p></div>
+    <div class="promise glass"><h3>Your data isn't training data</h3><p>We don't train AI on your messages. Text <kbd>DELETE MY DATA</kbd> and it's gone.</p></div>
+  </section>
+
+  <section class="start glass" id="start" aria-labelledby="start-h">
+    <div class="faces"><span data-face="biz" data-size="56"></span><span data-face="fol" data-size="56"></span><span data-face="voi" data-size="56"></span></div>
+    <h2 id="start-h">Drop your number. They'll text you.</h2>
+
+    <div class="step on" id="s1">
+      <form id="f1" novalidate>
+        <div class="field">
+          <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 555-0100" aria-label="Mobile number" required>
+          <button class="cta" id="b1" type="submit">Text me a code</button>
+        </div>
+        <label class="check"><input id="age" type="checkbox" required> I'm 18 or older.</label>
+        <label class="check"><input id="agree" type="checkbox" required>
+          <span>I agree to the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and to get texts from Macoma at this number: sign-in codes, a welcome text, replies to my messages, the reminders I set and account alerts. Some are sent automatically. Frequency varies. Msg &amp; data rates may apply. Reply STOP to cancel, HELP for help. <a href="/sms-terms" target="_blank">SMS terms</a>.</span>
+        </label>
+        <p class="msg" id="m1" role="alert"></p>
+      </form>
+    </div>
+
+    <div class="step" id="s2">
+      <p class="lede" style="font-size:17px">We texted a 6-digit code to <strong id="sentTo"></strong>.</p>
+      <form id="f2" novalidate>
+        <div class="field">
+          <input id="code" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" aria-label="6-digit code" required>
+          <button class="cta" id="b2" type="submit">Verify</button>
+        </div>
+        <p class="msg" id="m2" role="alert"></p>
+        <button type="button" class="linkbtn" id="back">Use a different number</button>
+      </form>
+    </div>
+
+    <div class="step" id="s3">
+      <p class="lede" style="font-size:18px" id="doneText">Your connect window is open. Link your calendar and Stripe there, then we'll text you.</p>
+      <a class="cta" id="openConnect" href="#" target="_blank" rel="opener">Open the connect window</a>
+      <p class="fine">Share Macoma with another owner:</p>
+      <div class="share"><input id="link" type="text" readonly aria-label="Your invite link"><button class="ghost" id="copy" type="button">Copy</button></div>
+    </div>
+  </section>
+</div>
+
+<footer class="site">
+  <span>Macoma</span><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/sms-terms">SMS terms</a>
+  <span class="legal">Apple Pay is a trademark of Apple Inc. Macoma is not affiliated with Apple. Payments are processed by Stripe.</span>
+</footer>
+
+<script src="/faces.js"></script>
 <script>
+(() => {
   const $ = (id) => document.getElementById(id);
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const ref = new URLSearchParams(location.search).get("ref");
-  const show = (n) => ["s1", "s2", "s3"].forEach((s, i) => $(s).classList.toggle("on", i === n));
+  let chosenPlan = "business";
+
+  // --- phone "videos" ----------------------------------------------------------------
+  const { svg: faceSvg, FACES } = window.MacomaFaces;
+  const wave = (n) => '<span class="wave">' + Array.from({ length: n }, (_, i) => `<b style="height:${4 + Math.round(Math.abs(Math.sin(i * 1.7)) * 13)}px"></b>`).join("") + "</span>";
+  const SCENES = {
+    brief: { agent: "biz", script: [
+      ["stamp", "<b>Today</b> 8:00 AM", 300],
+      ["bot", "Good morning, Vic ☀️\n10:00 Johnson deck, 412 Elm\nOrder stain, 2 gal\nRuiz invoice is 3 days late ($1,180)", 900],
+      ["bot", "Want me to nudge Ana?", 700],
+      ["me", "Yes, keep it friendly", 1500],
+      ["bot", "“Hi Ana, quick reminder that INV-0006 ($1,180) is still open. You can pay with Apple Pay here anytime. Thanks!”\nSend it?", 1300],
+      ["me", "Yes", 1400],
+      ["bot", "Sent to Ana ✓", 800],
+    ]},
+    late: { agent: "fol", script: [
+      ["stamp", "<b>Today</b> 1:52 PM", 300],
+      ["me", "running 15 late to the Johnson job", 500],
+      ["bot", "“Hi Mark, running about 15 min behind. Be there by 2:15. Sorry for the wait! – Waugh Painting”", 1300],
+      ["bot", "Send it?", 500],
+      ["me", "Yes", 1400],
+      ["bot", "Sent to Mark ✓", 800],
+      ["stamp", "<b>Today</b> 2:04 PM", 1600],
+      ["bot", "Mark replied: “No worries. Gate code is 4412.”", 600],
+    ]},
+    invoice: { agent: "biz", script: [
+      ["stamp", "<b>Mon</b> 4:18 PM", 300],
+      ["me", "invoice Dana $450 for the deck stain, due Friday", 500],
+      ["bot", 'Here’s the draft:<span class="inv"><span>Deck stain</span><span>$450.00</span><span>Due</span><span>Fri, Oct 30</span><span class="tot">Total</span><span class="tot">$450.00</span></span>Send to Dana?', 1400],
+      ["me", "Yes", 1400],
+      ["pay", "", 900],
+      ["stamp", "<b>Thu</b> 6:41 PM", 1700],
+      ["bot", "Dana paid $450.00 with Apple Pay 🎉", 600],
+    ]},
+    lead: { agent: "fol", script: [
+      ["stamp", "<b>Mon</b> 11:05 AM", 300],
+      ["me", "quoted the Patels $3,200 for the fence. if they don’t answer by Thursday, nudge me", 500],
+      ["bot", "Got it. Thursday 10 AM, only if they haven’t replied.", 1300],
+      ["stamp", "<b>Thu</b> 10:00 AM", 1700],
+      ["bot", "The Patels haven’t replied about the $3,200 fence. Check in?", 600],
+      ["me", "yes, short", 1400],
+      ["bot", "“Hi Priya, just checking in on the fence quote. Happy to answer any questions! – Vic”", 1300],
+      ["me", "Yes", 1300],
+      ["bot", "Sent ✓ I’ll let you know when she replies.", 800],
+    ]},
+    reorder: { agent: "biz", script: [
+      ["stamp", "<b>Mon</b> 7:40 AM", 300],
+      ["me", "remind me to order stain every other Monday at 9", 500],
+      ["bot", "Set. Every 2 weeks, Mon 9:00 AM. First one today.", 1300],
+      ["stamp", "<b>Mon</b> 9:00 AM", 1700],
+      ["bot", "Time to reorder deck stain. Last time: 2 gal from Hillside Supply ($86.40). Same again?", 600],
+      ["me", "yes", 1500],
+      ["bot", "Here’s your cart, ready to check out: hillside.example/cart/8f2 ✓", 1200],
+    ]},
+  };
+  const TYPING_MS = 750, TAIL_MS = 2800;
+  const ICON = {
+    play: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1l8.5 5-8.5 5z"/></svg>',
+    pause: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1h3v10H2zM7 1h3v10H7z"/></svg>',
+  };
+  const fmt = (ms) => `0:${String(Math.round(ms / 1000)).padStart(2, "0")}`;
+  const sideOf = (w) => (w === "me" || w === "voice" ? "me" : w === "bot" || w === "pay" ? "bot" : null);
+  const shell = (agent) => `<div class="phone"><div class="screen"><div class="island"></div>
+    <div class="status"><span>9:41</span><span class="icons"><b style="height:5px"></b><b style="height:7px"></b><b style="height:9px"></b><b style="height:11px"></b><span class="batt"></span></span></div>
+    <div class="chathead"><svg class="back" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div class="mid">${faceSvg(agent, 42)}<span class="name">${FACES[agent].name}</span></div>
+    <svg class="vid" viewBox="0 0 22 16" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="3" fill="currentColor"/><path d="M16 6l5-3v10l-5-3z" fill="currentColor"/></svg></div>
+    <div class="thread"></div><div class="inputbar"><span class="plus">+</span><span class="box">Message</span></div></div></div>`;
+  function node(m) {
+    const el = document.createElement("div");
+    if (m.who === "stamp") { el.className = "stamp"; el.innerHTML = m.text; return el; }
+    if (m.who === "pay") { el.className = "paycard"; el.innerHTML = '<div class="top">Sent to Dana Lee<strong>$450.00</strong>INV-0007 · Waugh Painting</div><span class="pay">Pay with Apple Pay</span>'; return el; }
+    el.className = `b ${sideOf(m.who)}${m.tail ? " tail" : ""}${m.gap ? " gap" : ""}`;
+    el.innerHTML = m.who === "voice" ? `<span class="voice"><svg viewBox="0 0 10 12"><path d="M1 1l8 5-8 5z"/></svg>${wave(22)}<span>${m.text}</span></span>` : m.text;
+    return el;
+  }
+  function setup(player) {
+    const { agent, script } = SCENES[player.dataset.scene];
+    player.innerHTML = shell(agent);
+    const thread = player.querySelector(".thread");
+    let t = 0;
+    const timeline = script.map(([who, text, pause]) => { t += pause; const typing = sideOf(who) === "bot" ? [t, (t += TYPING_MS)] : null; return { who, text, typing, at: t }; });
+    timeline.forEach((m, i) => { const s = sideOf(m.who), n = timeline[i + 1], p = timeline[i - 1]; m.tail = s && (!n || sideOf(n.who) !== s); m.gap = s && p && sideOf(p.who) !== s; });
+    const total = t + TAIL_MS;
+    const controls = document.createElement("div");
+    controls.className = "controls glass";
+    controls.innerHTML = `<button class="pp" type="button" aria-label="Play">${ICON.play}</button><div class="track"><b></b></div><span class="tc">${fmt(total)}</span>`;
+    player.append(controls);
+    const btn = controls.querySelector(".pp"), bar = controls.querySelector(".track b"), tc = controls.querySelector(".tc");
+    const render = (ms, animate) => {
+      thread.replaceChildren();
+      let last = null, stop = false;
+      for (const m of timeline) {
+        if (stop) break;
+        if (m.at <= ms) { thread.append(node(m)); if (m.who !== "stamp") last = m; }
+        else if (m.typing && ms >= m.typing[0]) { const ty = document.createElement("div"); ty.className = "typing"; ty.innerHTML = "<i></i><i></i><i></i>"; thread.append(ty); stop = true; }
+        else stop = true;
+      }
+      if (last && sideOf(last.who) === "me") { const r = document.createElement("div"); r.className = "receipt"; r.textContent = "Read"; thread.append(r); }
+      const el = [...thread.children].reverse().find((c) => !c.classList.contains("receipt"));
+      if (animate && el && !el.classList.contains("typing")) el.classList.add("pop");
+    };
+    render(Infinity, false);
+    let playing = false, start = 0, elapsed = total, raf = 0, shown = -1, userPaused = false;
+    const setBtn = () => { btn.innerHTML = playing ? ICON.pause : ICON.play; btn.setAttribute("aria-label", playing ? "Pause" : "Play"); };
+    function frame(now) {
+      elapsed = now - start;
+      if (elapsed >= total) { start = now; elapsed = 0; shown = -1; }
+      const n = timeline.filter((m) => m.at <= elapsed).length, typing = timeline.some((m) => m.typing && elapsed >= m.typing[0] && elapsed < m.at);
+      const key = n * 2 + (typing ? 1 : 0);
+      if (key !== shown) { render(elapsed, key > shown); shown = key; }
+      bar.style.transform = `scaleX(${elapsed / total})`;
+      tc.textContent = `${fmt(elapsed)} / ${fmt(total)}`;
+      raf = requestAnimationFrame(frame);
+    }
+    const play = () => { if (playing) return; playing = true; setBtn(); if (elapsed >= total) { elapsed = 0; shown = -1; } start = performance.now() - elapsed; raf = requestAnimationFrame(frame); };
+    const pause = () => { playing = false; setBtn(); cancelAnimationFrame(raf); };
+    btn.addEventListener("click", () => { if (playing) { pause(); userPaused = true; } else { userPaused = false; play(); } });
+    setBtn();
+    if (!reduce && "IntersectionObserver" in window) {
+      new IntersectionObserver(([e]) => { if (e.isIntersecting && !userPaused) play(); else if (!e.isIntersecting && playing) pause(); }, { threshold: 0.5 }).observe(player);
+    }
+  }
+  document.querySelectorAll(".player[data-scene]").forEach(setup);
+
+  // --- the path: scenes in and out, rail and top bar fill toward the form ----------------
+  const scenes = [...document.querySelectorAll(".scene")];
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        e.target.classList.toggle("in", e.isIntersecting);
+        e.target.classList.toggle("past", !e.isIntersecting && e.boundingClientRect.top < 0);
+      }
+    }, { threshold: 0.3 });
+    scenes.forEach((s) => io.observe(s));
+  } else scenes.forEach((s) => s.classList.add("in"));
+
+  const stops = [...document.querySelectorAll(".rail a")].map((a) => ({ a, el: document.getElementById(a.dataset.stop) }));
+  const goal = document.getElementById("start");
+  const onScroll = () => {
+    const end = goal.offsetTop - innerHeight * 0.4;
+    const p = Math.max(0, Math.min(1, scrollY / Math.max(1, end)));
+    document.documentElement.style.setProperty("--p", p.toFixed(3));
+    let here = stops[0];
+    for (const s of stops) if (s.el && s.el.getBoundingClientRect().top < innerHeight * 0.5) here = s;
+    for (const s of stops) { s.a.classList.toggle("here", s === here); s.a.classList.toggle("done", s.el && s.el.getBoundingClientRect().top < innerHeight * 0.5); }
+  };
+  addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
+
+  // --- plan cards --------------------------------------------------------------------------
+  document.querySelectorAll(".plan").forEach((card) => card.querySelector("button").addEventListener("click", () => {
+    chosenPlan = card.dataset.plan;
+    document.querySelectorAll(".plan").forEach((c) => c.classList.toggle("pick", c === card));
+    goal.scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
+    setTimeout(() => $("phone").focus({ preventScroll: true }), reduce ? 0 : 600);
+  }));
+
+  // --- number → code → connect window ---------------------------------------------------------
+  const show = (n) => ["s1", "s2", "s3"].forEach((id, i) => $(id).classList.toggle("on", i === n));
   async function post(url, body) {
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "Something went wrong.");
+    if (!res.ok) throw new Error(data.error || "Something went wrong. Try again.");
     return data;
   }
-
-  fetch("/api/config").then(r => r.json()).then(cfg => {
-    if (ref) $("lede").textContent = "A friend invited you. Macoma is an AI assistant that lives in your messages: reminders, reorders, invoices, follow-ups.";
-    else if (cfg.inviteOnly) $("lede").textContent = "Invite-only for now. You'll need a link from a friend.";
+  fetch("/api/config").then((r) => r.json()).then((cfg) => {
+    if (ref) $("lede").textContent = "A friend invited you. Three assistants in your messages handle invoices, reorders, follow-ups and running-late texts. You just reply.";
+    else if (cfg.inviteOnly) $("start-h").textContent = "Invite-only for now. Ask a friend for their link.";
   }).catch(() => {});
+
+  $("phone").addEventListener("input", () => {
+    const v = $("phone").value;
+    if (v.startsWith("+")) return;
+    const d = v.replace(/\D/g, "").slice(0, 10);
+    $("phone").value = d.length > 6 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : d.length > 3 ? `(${d.slice(0, 3)}) ${d.slice(3)}` : d;
+  });
 
   $("f1").addEventListener("submit", async (e) => {
     e.preventDefault();
-    $("e1").textContent = "";
+    const m = $("m1"); m.className = "msg"; m.textContent = "";
+    if (!$("age").checked || !$("agree").checked) { m.className = "msg err"; m.textContent = "Please confirm you're 18+ and agree to the terms."; return; }
     $("b1").disabled = true;
     try {
-      await post("/api/join", { phone: $("phone").value, ref, ageConfirmed: $("age").checked, agreed: $("agree").checked });
+      await post("/api/join", { phone: $("phone").value, ref, ageConfirmed: true, agreed: true });
       $("sentTo").textContent = $("phone").value;
       show(1);
       $("code").focus();
-    } catch (err) { $("e1").textContent = err.message; }
+    } catch (err) { m.className = "msg err"; m.textContent = err.message; }
     finally { $("b1").disabled = false; }
   });
 
   $("f2").addEventListener("submit", async (e) => {
     e.preventDefault();
-    $("e2").textContent = "";
+    const m = $("m2"); m.className = "msg"; m.textContent = "";
+    // Open the window inside the click so browsers allow it, then point it at the connect page.
+    const win = window.open("", "macoma-connect");
     $("b2").disabled = true;
     try {
       const data = await post("/api/verify", { phone: $("phone").value, code: $("code").value });
+      const url = `${data.connectUrl}&plan=${encodeURIComponent(chosenPlan)}`;
       $("link").value = data.shareUrl;
-      if (!data.isNew) { $("doneTitle").textContent = "Welcome back."; $("doneLede").textContent = "Your assistant is a text away."; }
-      $("count").textContent = data.referrals ? `${data.referrals} friend${data.referrals === 1 ? "" : "s"} joined with your link.` : "";
-      if (data.agentNumber) { $("sms").href = "sms:" + data.agentNumber; $("sms").hidden = false; }
-      if (navigator.share) $("native").hidden = false;
+      $("openConnect").href = url;
+      if (!data.isNew) $("doneText").textContent = "Welcome back. Your connect window is open if you want to link more accounts.";
+      if (win) win.location.href = url;
+      else $("doneText").textContent = "Almost done. Open the connect window to link your calendar and Stripe, then we'll text you.";
       show(2);
-    } catch (err) { $("e2").textContent = err.message; }
-    finally { $("b2").disabled = false; }
+    } catch (err) {
+      if (win) win.close();
+      m.className = "msg err"; m.textContent = err.message;
+    } finally { $("b2").disabled = false; }
   });
-
   $("back").addEventListener("click", () => { $("code").value = ""; show(0); });
-
   $("copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("link").value); } catch { $("link").select(); document.execCommand("copy"); }
-    $("copy").textContent = "Copied";
-    setTimeout(() => ($("copy").textContent = "Copy"), 1500);
+    $("copy").textContent = "Copied"; setTimeout(() => ($("copy").textContent = "Copy"), 1500);
   });
-
-  $("native").addEventListener("click", () => {
-    navigator.share({ title: "Macoma", text: "The office manager you text. Here's my invite:", url: $("link").value }).catch(() => {});
-  });
+})();
 </script>
 </body>
 </html>
