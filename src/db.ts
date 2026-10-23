@@ -68,6 +68,27 @@ CREATE INDEX IF NOT EXISTS jobs_phone_open ON jobs (phone, id) WHERE status IN (
 -- One free trial per number: a hash of each number that has had one, kept after deletion.
 CREATE TABLE IF NOT EXISTS trial_history (phone_hash text PRIMARY KEY, at timestamptz NOT NULL DEFAULT now());
 
+-- Pre-launch sign-ups (LAUNCH_MODE=waitlist). Answers are what we measure interest with.
+CREATE TABLE IF NOT EXISTS waitlist (
+  id bigserial PRIMARY KEY,
+  email text NOT NULL UNIQUE,
+  name text,
+  phone text,
+  text_consent_at timestamptz,
+  business text,
+  wants text[] NOT NULL DEFAULT '{}',
+  plan text,
+  code text NOT NULL UNIQUE,
+  referred_by text,
+  referrals integer NOT NULL DEFAULT 0,
+  source text,
+  campaign text,
+  referrer_host text,
+  ip text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS waitlist_created ON waitlist (created_at);
+
 CREATE TABLE IF NOT EXISTS oauth_states (state text PRIMARY KEY, doc jsonb NOT NULL, expires_at timestamptz NOT NULL);
 
 CREATE TABLE IF NOT EXISTS rate_limits (key text NOT NULL, bucket bigint NOT NULL, count integer NOT NULL, PRIMARY KEY (key, bucket));

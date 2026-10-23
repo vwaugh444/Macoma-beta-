@@ -153,6 +153,28 @@
     .share { display: flex; gap: 8px; width: min(460px, 100%); }
     .share input { flex: 1; min-width: 0; font: 500 15px/1 var(--sans); color: var(--ink); background: var(--glass-strong); border: 1px solid var(--glass-edge); border-radius: 14px; padding: 12px 14px; }
 
+    /* Before launch (data-mode="waitlist", set by the server) the page ends in a waitlist. */
+    :root[data-mode="waitlist"] .when-live, :root:not([data-mode="waitlist"]) .when-wait { display: none !important; }
+    .start, .wl, .ticket { grid-template-columns: minmax(0, 1fr); } /* columns take the screen's width, never their content's */
+    .wl { width: 100%; max-width: 560px; display: grid; gap: 18px; text-align: left; }
+    .ticket .share { width: 100%; }
+    .wl form { display: grid; gap: 20px; }
+    .wl fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+    .wl legend { font: 600 15px/1.3 var(--sans); padding: 0; margin-bottom: 10px; }
+    .wl legend span { font-weight: 500; color: var(--muted); }
+    .row2 { display: grid; grid-template-columns: 1fr 1.5fr; gap: 10px; }
+    .in { width: 100%; font: 500 17px/1.2 var(--sans); color: var(--ink); background: var(--glass-strong); border: 1px solid var(--glass-rim); border-radius: 16px; padding: 15px 16px; box-shadow: inset 0 1px 2px rgba(20, 30, 60, .06); }
+    .in::placeholder { color: var(--muted); }
+    .in:focus { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 45%, transparent); }
+    .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+    .wl .cta.big { width: 100%; }
+    .ticket { border-radius: 32px; padding: 30px 22px; display: grid; gap: 10px; justify-items: center; text-align: center; }
+    .ticket .pos { font: 700 clamp(64px, 16vw, 108px)/0.95 var(--round); letter-spacing: -0.045em; font-variant-numeric: tabular-nums; }
+    .ticket .pos small { font-size: .45em; color: var(--muted); letter-spacing: -0.02em; vertical-align: .55em; margin-right: 2px; }
+    .ticket .share { margin-top: 6px; }
+    .count { font-weight: 600; color: var(--ink); }
+    @media (max-width: 520px) { .row2 { grid-template-columns: 1fr; } }
+
     @media (max-width: 860px) {
       .hero { grid-template-columns: 1fr; padding-block: 40px; }
       .roster, .promises, .plans { grid-template-columns: 1fr; }
@@ -171,14 +193,14 @@
   <a href="#top" data-stop="top" title="See it"><i></i>See it</a>
   <a href="#meet" data-stop="meet" title="Meet them"><i></i>Meet them</a>
   <a href="#watch" data-stop="watch" title="Watch them work"><i></i>Watch them work</a>
-  <a href="#plans" data-stop="plans" title="Pick a plan"><i></i>Pick a plan</a>
-  <a href="#start" data-stop="start" title="Your number"><i></i>Your number</a>
+  <a href="#plans" data-stop="plans" title="Pick a plan"><i></i><span class="when-live">Pick a plan</span><span class="when-wait">Pricing</span></a>
+  <a href="#start" data-stop="start" title="Your number"><i></i><span class="when-live">Your number</span><span class="when-wait">Get in line</span></a>
 </nav>
 
 <div class="wrap">
   <nav class="top glass" aria-label="Macoma">
     <a class="logo" href="#top"><img src="/brand/mark.svg" width="28" height="28" alt="" style="border-radius:7px">macoma</a>
-    <span style="display:flex;gap:8px;align-items:center"><a class="ghost" href="/signin">Sign in</a><a class="cta sm" href="#start">Get started</a></span>
+    <span style="display:flex;gap:8px;align-items:center"><a class="ghost when-live" href="/signin">Sign in</a><a class="cta sm" href="#start"><span class="when-live">Get started</span><span class="when-wait">Join the waitlist</span></a></span>
   </nav>
 
   <header class="hero" id="top">
@@ -186,8 +208,9 @@
       <p class="eyebrow">For people who run a business from their phone</p>
       <h1>The office manager you <em>text.</em></h1>
       <p class="lede" id="lede">Three assistants in your messages send invoices your customers pay with Apple Pay, remember reorders, chase leads and tell your 2pm you're running late. You just reply.</p>
-      <a class="cta big" href="#start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3C6.5 3 2 6.8 2 11.5c0 2.6 1.4 4.9 3.6 6.5-.2 1.3-.9 2.6-2 3.5 2 0 3.8-.6 5.2-1.7 1 .3 2.1.4 3.2.4 5.5 0 10-3.8 10-8.5S17.5 3 12 3z"/></svg>Start free for 14 days</a>
-      <p class="fine">No app. No password. Cancel by texting CANCEL PLAN.</p>
+      <a class="cta big" href="#start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3C6.5 3 2 6.8 2 11.5c0 2.6 1.4 4.9 3.6 6.5-.2 1.3-.9 2.6-2 3.5 2 0 3.8-.6 5.2-1.7 1 .3 2.1.4 3.2.4 5.5 0 10-3.8 10-8.5S17.5 3 12 3z"/></svg><span class="when-live">Start free for 14 days</span><span class="when-wait">Join the waitlist</span></a>
+      <p class="fine when-live">No app. No password. Cancel by texting CANCEL PLAN.</p>
+      <p class="fine when-wait">Launching soon. Free to join, no card. <span class="count" id="wlCount"></span></p>
       <a class="textlink" id="textLink" href="#start" hidden>Text Macoma ›</a>
     </div>
     <div class="player" data-scene="brief" aria-label="Example: the morning brief"></div>
@@ -255,13 +278,14 @@
   <section id="plans" aria-labelledby="plans-h">
     <div class="section-head">
       <p class="eyebrow">Plans</p>
-      <h2 id="plans-h">Free for 14 days. Then pick what fits.</h2>
-      <p class="fine">Pay with Apple Pay or a card. Every plan has a monthly allowance, so you'll never get a surprise bill.</p>
+      <h2 id="plans-h"><span class="when-live">Free for 14 days. Then pick what fits.</span><span class="when-wait">Planned pricing. Founding members go first.</span></h2>
+      <p class="fine when-live">Pay with Apple Pay or a card. Every plan has a monthly allowance, so you'll never get a surprise bill.</p>
+      <p class="fine when-wait">14 days free at launch, then Apple Pay or a card. Prices may change before launch; tell us which you'd pick and it helps us get it right.</p>
     </div>
     <div class="plans">
-      <article class="plan glass" data-plan="personal"><h3>Personal</h3><p class="price">$19<small> /month</small></p><ul><li>150 assistant replies</li><li>Reminders and morning brief</li><li>Business Assistant</li></ul><button class="ghost" type="button">Choose Personal</button></article>
-      <article class="plan glass pick" data-plan="business"><h3>Business</h3><p class="price">$59<small> /month</small></p><ul><li>400 assistant replies</li><li>300 texts to your customers</li><li>Invoices with Apple Pay, 1% fee when paid</li><li>All three assistants</li></ul><button class="ghost" type="button">Choose Business</button></article>
-      <article class="plan glass" data-plan="crew"><h3>Crew</h3><p class="price">$149<small> /month</small></p><ul><li>1,000 assistant replies</li><li>800 texts to your customers</li><li>3 team members, 0.5% invoice fee</li></ul><button class="ghost" type="button">Choose Crew</button></article>
+      <article class="plan glass" data-plan="personal"><h3>Personal</h3><p class="price">$19<small> /month</small></p><ul><li>150 assistant replies</li><li>Reminders and morning brief</li><li>Business Assistant</li></ul><button class="ghost" type="button"><span class="when-live">Choose Personal</span><span class="when-wait">I'd pick Personal</span></button></article>
+      <article class="plan glass pick" data-plan="business"><h3>Business</h3><p class="price">$59<small> /month</small></p><ul><li>400 assistant replies</li><li>300 texts to your customers</li><li>Invoices with Apple Pay, 1% fee when paid</li><li>All three assistants</li></ul><button class="ghost" type="button"><span class="when-live">Choose Business</span><span class="when-wait">I'd pick Business</span></button></article>
+      <article class="plan glass" data-plan="crew"><h3>Crew</h3><p class="price">$149<small> /month</small></p><ul><li>1,000 assistant replies</li><li>800 texts to your customers</li><li>3 team members, 0.5% invoice fee</li></ul><button class="ghost" type="button"><span class="when-live">Choose Crew</span><span class="when-wait">I'd pick Crew</span></button></article>
     </div>
     <p class="fine" style="text-align:center">Need more? Reply MORE for 200 extra replies ($20). Extra team member $25/month.</p>
   </section>
@@ -274,8 +298,53 @@
 
   <section class="start glass" id="start" aria-labelledby="start-h">
     <div class="faces"><span data-face="biz" data-size="56"></span><span data-face="fol" data-size="56"></span><span data-face="voi" data-size="56"></span></div>
-    <h2 id="start-h">Drop your number. They'll text you.</h2>
+    <h2 id="start-h"><span class="when-live">Drop your number. They'll text you.</span><span class="when-wait">Be first in line.</span></h2>
 
+    <div class="wl when-wait">
+      <form id="wf" novalidate>
+        <p class="lede" style="font-size:18px;text-align:center">Macoma opens to a small group of owners first. Join free and we'll email you when it's your turn.</p>
+        <div class="row2">
+          <input class="in" id="wlName" type="text" autocomplete="given-name" placeholder="First name" aria-label="First name" maxlength="60">
+          <input class="in" id="wlEmail" type="email" autocomplete="email" placeholder="Email" aria-label="Email" required maxlength="254">
+        </div>
+        <fieldset><legend>What kind of business do you run?</legend>
+          <div class="chips" data-one="business">
+            <button type="button" class="chip" data-v="trades">Trades &amp; home services</button><button type="button" class="chip" data-v="beauty">Salon &amp; beauty</button><button type="button" class="chip" data-v="food">Food &amp; catering</button><button type="button" class="chip" data-v="retail">Retail &amp; online shop</button><button type="button" class="chip" data-v="services">Consulting &amp; agency</button><button type="button" class="chip" data-v="health">Health &amp; fitness</button><button type="button" class="chip" data-v="other">Something else</button>
+          </div>
+        </fieldset>
+        <fieldset><legend>What would you hand off first? <span>Pick any</span></legend>
+          <div class="chips" data-many="wants">
+            <button type="button" class="chip" data-v="invoices">Invoices &amp; getting paid</button><button type="button" class="chip" data-v="running_late">Running-late texts</button><button type="button" class="chip" data-v="follow_ups">Following up leads</button><button type="button" class="chip" data-v="reorders">Remembering reorders</button><button type="button" class="chip" data-v="brief">A morning brief</button><button type="button" class="chip" data-v="reminders">Reminders</button>
+          </div>
+        </fieldset>
+        <fieldset><legend>Which plan would you pick?</legend>
+          <div class="chips" data-one="plan">
+            <button type="button" class="chip" data-v="personal">Personal · $19</button><button type="button" class="chip" data-v="business">Business · $59</button><button type="button" class="chip" data-v="crew">Crew · $149</button><button type="button" class="chip" data-v="unsure">Not sure yet</button>
+          </div>
+        </fieldset>
+        <label class="check"><input id="wlText" type="checkbox"> <span>Also text me once when it's my turn (optional).</span></label>
+        <div id="wlPhoneRow" hidden>
+          <input class="in" id="wlPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Mobile number" aria-label="Mobile number">
+          <p class="fine" style="margin-top:8px">One text from Macoma at launch to this number. Msg &amp; data rates may apply. Reply STOP to opt out. Not a condition of anything.</p>
+        </div>
+        <label class="hp" aria-hidden="true">Website <input id="wlSite" type="text" tabindex="-1" autocomplete="off"></label>
+        <button class="cta big" id="wlGo" type="submit">Join the waitlist</button>
+        <p class="fine" style="text-align:center">We'll only email you about Macoma's launch. Unsubscribe anytime. <a href="/privacy" target="_blank">Privacy</a></p>
+        <p class="msg" id="wlMsg" role="alert" style="text-align:center"></p>
+      </form>
+
+      <div class="ticket glass" id="wlDone" hidden tabindex="-1" aria-live="polite">
+        <p class="eyebrow" id="wlHello">You're on the list</p>
+        <p class="pos"><small>#</small><span id="wlPos">1</span></p>
+        <p class="fine" id="wlOf"></p>
+        <p style="max-width:34ch">Move up <b id="wlBoost">10</b> spots for every owner who joins with your link.</p>
+        <div class="share"><input id="wlLink" type="text" readonly aria-label="Your waitlist link"><button class="ghost" id="wlCopy" type="button">Copy</button><button class="ghost" id="wlShare" type="button" hidden>Share</button></div>
+        <p class="fine" id="wlRefs"></p>
+        <button type="button" class="linkbtn" id="wlAgain">Not you? Join with another email</button>
+      </div>
+    </div>
+
+    <div class="when-live" style="display:contents">
     <div class="step on" id="s1">
       <form id="f1" novalidate>
         <div class="field">
@@ -308,6 +377,7 @@
       <p class="fine">Share Macoma with another owner:</p>
       <div class="share"><input id="link" type="text" readonly aria-label="Your invite link"><button class="ghost" id="copy" type="button">Copy</button></div>
     </div>
+    </div>
   </section>
 </div>
 
@@ -323,6 +393,7 @@
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const ref = new URLSearchParams(location.search).get("ref");
   let chosenPlan = "business";
+  const WAITLIST = document.documentElement.dataset.mode === "waitlist";
 
   // --- phone "videos" ----------------------------------------------------------------
   const { svg: faceSvg, FACES } = window.MacomaFaces;
@@ -477,7 +548,8 @@
     chosenPlan = card.dataset.plan;
     document.querySelectorAll(".plan").forEach((c) => c.classList.toggle("pick", c === card));
     goal.scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
-    setTimeout(() => $("phone").focus({ preventScroll: true }), reduce ? 0 : 600);
+    if (WAITLIST) pick("plan", card.dataset.plan);
+    setTimeout(() => $(WAITLIST ? "wlEmail" : "phone").focus({ preventScroll: true }), reduce ? 0 : 600);
   }));
 
   // --- number → code → connect window ---------------------------------------------------------
@@ -544,6 +616,74 @@
     } finally { $("b2").disabled = false; }
   });
   $("back").addEventListener("click", () => { $("code").value = ""; show(0); $("phone").focus(); });
+
+  // --- waitlist (before launch) -------------------------------------------------------------
+  const answers = { business: null, plan: null, wants: new Set() };
+  function pick(group, value) {
+    const box = document.querySelector(`[data-one="${group}"]`);
+    answers[group] = answers[group] === value ? null : value; // tap again to clear
+    box.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.v === answers[group])));
+  }
+  document.querySelectorAll("[data-one] .chip").forEach((c) => {
+    c.setAttribute("aria-pressed", "false");
+    c.addEventListener("click", () => pick(c.parentElement.dataset.one, c.dataset.v));
+  });
+  document.querySelectorAll("[data-many] .chip").forEach((c) => {
+    c.setAttribute("aria-pressed", "false");
+    c.addEventListener("click", () => {
+      answers.wants.has(c.dataset.v) ? answers.wants.delete(c.dataset.v) : answers.wants.add(c.dataset.v);
+      c.setAttribute("aria-pressed", String(answers.wants.has(c.dataset.v)));
+    });
+  });
+  $("wlText").addEventListener("change", () => { $("wlPhoneRow").hidden = !$("wlText").checked; if ($("wlText").checked) $("wlPhone").focus(); });
+
+  const saved = { get() { try { return localStorage.getItem("macoma_wl"); } catch { return null; } }, set(v) { try { v ? localStorage.setItem("macoma_wl", v) : localStorage.removeItem("macoma_wl"); } catch {} } };
+  function showTicket(t) {
+    $("wf").hidden = true;
+    $("wlDone").hidden = false;
+    $("start-h").querySelector(".when-wait").textContent = "You're in line.";
+    $("wlHello").textContent = t.name ? `You're on the list, ${t.name}` : "You're on the list";
+    $("wlPos").textContent = t.position.toLocaleString();
+    $("wlOf").textContent = t.already ? `You'd already joined. ${t.total.toLocaleString()} owners are waiting.` : `of ${t.total.toLocaleString()} owners waiting`;
+    $("wlBoost").textContent = t.boost;
+    $("wlLink").value = t.shareUrl;
+    $("wlRefs").textContent = t.referrals ? `${t.referrals} ${t.referrals === 1 ? "owner has" : "owners have"} joined with your link.` : "Share it with another owner who'd use it.";
+    $("wlShare").hidden = !navigator.share;
+    saved.set(t.code);
+  }
+  if (WAITLIST) {
+    fetch("/api/waitlist/count").then((r) => r.json()).then((d) => { if (d.count) $("wlCount").textContent = `${d.count.toLocaleString()} owners already waiting.`; }).catch(() => {});
+    const code = saved.get();
+    if (code) fetch(`/api/waitlist/status?code=${encodeURIComponent(code)}`).then((r) => (r.ok ? r.json() : null)).then((t) => (t ? showTicket(t) : saved.set(null))).catch(() => {});
+  }
+
+  $("wf").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const m = $("wlMsg"); m.className = "msg"; m.textContent = "";
+    const email = $("wlEmail").value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { m.className = "msg err"; m.textContent = "Enter your email so we can tell you when it's your turn."; $("wlEmail").focus(); return; }
+    const texting = $("wlText").checked && $("wlPhone").value.trim();
+    const q = new URLSearchParams(location.search);
+    let referrerHost = null;
+    try { const h = document.referrer && new URL(document.referrer).host; if (h && h !== location.host) referrerHost = h; } catch {}
+    $("wlGo").disabled = true;
+    try {
+      const t = await post("/api/waitlist", {
+        email, name: $("wlName").value.trim(), business: answers.business, plan: answers.plan, wants: [...answers.wants],
+        phone: texting ? $("wlPhone").value.trim() : "", textConsent: Boolean(texting),
+        ref, source: q.get("utm_source"), campaign: q.get("utm_campaign"), referrerHost, website: $("wlSite").value,
+      });
+      showTicket(t);
+      $("wlDone").focus();
+    } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+    finally { $("wlGo").disabled = false; }
+  });
+  $("wlCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("wlLink").value); } catch { $("wlLink").select(); document.execCommand("copy"); }
+    $("wlCopy").textContent = "Copied"; setTimeout(() => ($("wlCopy").textContent = "Copy"), 1500);
+  });
+  $("wlShare").addEventListener("click", () => navigator.share({ title: "Macoma", text: "The office manager you text. I'm on the waitlist:", url: $("wlLink").value }).catch(() => {}));
+  $("wlAgain").addEventListener("click", () => { saved.set(null); $("wlDone").hidden = true; $("wf").hidden = false; $("start-h").querySelector(".when-wait").textContent = "Be first in line."; $("wlEmail").value = ""; $("wlEmail").focus(); });
   $("copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("link").value); } catch { $("link").select(); document.execCommand("copy"); }
     $("copy").textContent = "Copied"; setTimeout(() => ($("copy").textContent = "Copy"), 1500);

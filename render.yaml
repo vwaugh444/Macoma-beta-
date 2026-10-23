@@ -48,6 +48,10 @@ databases:
 envVarGroups:
   - name: macoma
     envVars:
+      # "waitlist" before launch: the site collects sign-ups and needs no Anthropic,
+      # Twilio or Stripe keys (leave them blank). Change to "live" on launch day.
+      - key: LAUNCH_MODE
+        value: waitlist
       # Your web service's address, e.g. https://macoma-web.onrender.com (or your domain)
       - key: PUBLIC_URL
         sync: false

@@ -1,5 +1,7 @@
 import "dotenv/config";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import express, { type Request } from "express";
 import { a2aSpentToday, runAgent } from "./agent.js";
 import { agentCard, a2aHandler } from "./a2a.js";
@@ -11,6 +13,7 @@ import * as biz from "./business.js";
 import * as billing from "./billing.js";
 import { connectorRoutes, connectToken, startSession, whoIs } from "./connectors.js";
 import { workspaceRoutes } from "./workspace.js";
+import { waitlistRoutes } from "./waitlist.js";
 import { stripeEnabled, type Stripe } from "./stripeClient.js";
 import { startScheduler } from "./scheduler.js";
 import { allow, enqueue, queueStats, startWorkers, stopWorkers } from "./queue.js";
@@ -20,6 +23,8 @@ const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://localhost:${PORT}`).replace(/\/$/, "");
 const INVITE_ONLY = process.env.INVITE_ONLY === "true";
 const AGENT_NUMBER = process.env.TWILIO_PHONE_NUMBER ?? "";
+// "waitlist" before launch (collect interest, no sign-ups or texts), "live" after.
+const WAITLIST = process.env.LAUNCH_MODE === "waitlist";
 const OTP_COUNTRIES = (process.env.OTP_COUNTRY_CODES ?? "1").split(",").map((c) => c.trim()).filter(Boolean);
 const OTP_GLOBAL_HOURLY = Number(process.env.OTP_GLOBAL_HOURLY ?? 500);
 // web: pages, sign-in and webhooks. worker: runs queued jobs and the scheduler. all: both (dev, small installs).
@@ -70,6 +75,15 @@ app.post("/sms", express.urlencoded({ extended: false }), async (req, res) => {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Before launch (LAUNCH_MODE=waitlist) the same homepage tells the story but ends in a waitlist
+// instead of sign-up. The mode is set on <html> so the right copy shows with no flash.
+if (WAITLIST) {
+  const page = fs.readFileSync(path.join("public", "index.html"), "utf8").replace("<html lang=\"en\">", '<html lang="en" data-mode="waitlist">');
+  app.get(["/", "/index.html"], (_req, res) => res.type("html").send(page));
+  app.get(["/signin", "/signin.html"], (_req, res) => res.redirect("/#start"));
+  app.post(["/api/join", "/api/verify"], (_req, res) => res.status(403).json({ error: "Macoma isn't open yet. Join the waitlist and we'll let you know.", waitlist: true }));
+}
 app.use(express.static("public", { extensions: ["html"] }));
 
 // Each request is one unit of work: accounts it changes are saved before the response goes out.
@@ -86,6 +100,7 @@ app.use((_req, res, next) => {
   });
 });
 
+app.use(waitlistRoutes());
 app.use(connectorRoutes(sendWelcome));
 app.use(workspaceRoutes());
 
@@ -117,7 +132,7 @@ app.get("/api/billing/plans", (_req, res) => {
 const hashOtp = (phone: string, code: string) => crypto.createHash("sha256").update(`${phone}:${code}`).digest("hex");
 
 app.get("/api/config", (_req, res) => {
-  res.json({ inviteOnly: INVITE_ONLY, agentNumber: AGENT_NUMBER, termsVersion: TERMS_VERSION });
+  res.json({ inviteOnly: INVITE_ONLY, agentNumber: AGENT_NUMBER, termsVersion: TERMS_VERSION, mode: WAITLIST ? "waitlist" : "live" });
 });
 
 app.post("/api/join", async (req, res) => {
@@ -217,7 +232,7 @@ app.get("/readyz", async (req: Request, res) => {
 async function main() {
   await db();
   await importLegacyStore();
-  console.log(`Macoma (${ROLE}) on ${usingPostgres() ? "Postgres" : "embedded Postgres (dev)"}`);
+  console.log(`Macoma (${ROLE}${WAITLIST ? ", waitlist mode" : ""}) on ${usingPostgres() ? "Postgres" : "embedded Postgres (dev)"}`);
   if (ROLE !== "worker") {
     const server = app.listen(PORT, () => {
       console.log(`  Web:     ${PUBLIC_URL}`);

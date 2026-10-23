@@ -6,6 +6,38 @@ Plan for about 8 hours. Each block lists what you do, where you click, and which
 
 ---
 
+## Start here: put the waitlist online (about 1 hour, no texting needed)
+
+Before the product opens, run the site in **waitlist mode** to see who wants it. It's the same homepage and the same scroll story, but it ends in "Be first in line" instead of sign-up. It needs only Render and its Postgres: no Anthropic, Twilio or Stripe keys, and no carrier registration.
+
+1. Render → New → Blueprint → this repo. `render.yaml` already sets `LAUNCH_MODE=waitlist`. Leave every other key blank except `PUBLIC_URL` and `SUPPORT_EMAIL`. (You can suspend `macoma-worker` while in waitlist mode; nothing uses it.)
+2. Add your domain, point `PUBLIC_URL` at it, and redeploy.
+3. Open `https://YOUR-URL/admin` and paste `OPS_TOKEN`, which is in Render → Environment → macoma group.
+
+What a visitor does:
+- enters an email (required) and a first name;
+- picks their business type, what they'd hand off first, and the plan they'd pick;
+- optionally checks "text me once at launch" and adds a mobile number.
+
+They get a place in line and a share link, and every owner who joins with it moves them up 10 spots. The page remembers them when they come back.
+
+What you see at `/admin`:
+- total sign-ups, sign-ups per day, the share of people who came from a friend's link, and how many want a launch text;
+- what people would hand off first, business types and plan picks;
+- where people came from: tag your links with `?utm_source=instagram&utm_campaign=oct`;
+- your top sharers;
+- a CSV export of everything.
+
+Signals worth watching before you build further:
+- sign-ups per week from each channel;
+- the share who picked a paid plan rather than "not sure";
+- which hand-off wins;
+- the share who came from a friend's link. That's word of mouth; above about 20% is a strong sign.
+
+On launch day, set `LAUNCH_MODE=live`, then do the blocks below. Email the list from the CSV in waves, top of the line first.
+
+---
+
 ## Read this first: the one thing a day can't fix
 
 **US carriers block texts from unregistered business numbers.** Two ways to register a Twilio number:

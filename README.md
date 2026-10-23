@@ -110,6 +110,10 @@ curl -X POST localhost:3000/a2a -H 'content-type: application/json' -d '{
 
 Or text your agent: "ask the agent at https://some-agent.example.com to …"
 
+## Before launch: waitlist mode
+
+With `LAUNCH_MODE=waitlist` the homepage ends in a waitlist instead of sign-up. People get a place in line and a share link, and `/admin` shows who wants Macoma and why, with a CSV export. It needs only a database, with no AI, texting or payment keys. See the top of [docs/LAUNCH_DAY.md](docs/LAUNCH_DAY.md).
+
 ## Put it online in a day
 
 [docs/LAUNCH_DAY.md](docs/LAUNCH_DAY.md) is the hour-by-hour plan. It covers the API keys to get, every connector's console steps and callback URL, Stripe checkout with Apple Pay in test mode, and a one-click Render deploy from `render.yaml`.

@@ -21,11 +21,13 @@ import { agenda, connectUrl, connectedSummary } from "./connectors.js";
 
 // Retries ride out 429s and overloads with backoff; the gate below caps how many model
 // calls one process runs at once, so a burst of texts queues here instead of tripping limits.
-const client = new Anthropic({ maxRetries: Number(process.env.ANTHROPIC_MAX_RETRIES ?? 4) });
+// Created on first use, so the site can run (for example as a waitlist) without an API key.
+let anthropic: Anthropic | null = null;
+const client = () => (anthropic ??= new Anthropic({ maxRetries: Number(process.env.ANTHROPIC_MAX_RETRIES ?? 4) }));
 // AI_MOCK=1 answers without calling the API, for load tests (scripts/load-test.ts).
 type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
 const create = async (params: CreateParams): Promise<Anthropic.Beta.Messages.BetaMessage> => {
-  if (process.env.AI_MOCK !== "1") return client.beta.messages.create(params);
+  if (process.env.AI_MOCK !== "1") return client().beta.messages.create(params);
   await new Promise((r) => setTimeout(r, Number(process.env.AI_MOCK_MS ?? 800)));
   return {
     model: params.model,
