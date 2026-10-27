@@ -1,0 +1,126 @@
+/* Shared look for the Macoma films: soft color fields, liquid glass, an iPhone with a
+   Messages thread, lock-screen notifications, a connections hub, and the end card.
+   Every frame is drawn by film.js from a single time value, so renders are exact. */
+:root {
+  --ground: #eef0f6;
+  --ink: #1d1d1f;
+  --muted: #6e6e73;
+  --blue: #0a84ff;
+  --bubble: #e9e9eb;
+  --biz: #ffcc2e;
+  --fol: #2f7bff;
+  --voi: #34c77b;
+  --glass: rgba(255, 255, 255, 0.56);
+  --rim: rgba(255, 255, 255, 0.75);
+  --display: "Inter Display", Inter, -apple-system, "SF Pro Display", system-ui, sans-serif;
+  --text: Inter, -apple-system, "SF Pro Text", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { width: 1920px; height: 1080px; overflow: hidden; background: var(--ground); color: var(--ink); font-family: var(--text); -webkit-font-smoothing: antialiased; }
+.stage { position: absolute; inset: 0; overflow: hidden; }
+
+/* Color fields drifting behind everything */
+.fields i { position: absolute; border-radius: 50%; opacity: .9; } /* soft radial gradients, not blur: same look, far faster to render */
+
+.glass {
+  background: linear-gradient(180deg, rgba(255,255,255,.45), rgba(255,255,255,0) 50%), var(--glass);
+  backdrop-filter: blur(34px) saturate(190%);
+  border: 1.5px solid var(--rim);
+  box-shadow: inset 0 1.5px 1px rgba(255,255,255,.95), inset 0 -30px 50px -40px rgba(255,255,255,.7), 0 40px 90px -40px rgba(20,30,60,.35);
+}
+
+/* Big type */
+.kin { position: absolute; left: 0; right: 0; text-align: center; font: 700 112px/1.02 var(--display); letter-spacing: -0.045em; }
+.kin.small { font-size: 72px; }
+.kin .w { display: inline-block; white-space: pre; }
+.kin .soft { color: var(--muted); }
+.time-tag { position: absolute; font: 600 30px/1 var(--text); color: var(--muted); letter-spacing: -0.01em; }
+
+/* Captions beside the phone */
+.cap { position: absolute; width: 640px; display: grid; gap: 18px; }
+.cap h2 { margin: 0; font: 700 70px/1.02 var(--display); letter-spacing: -0.04em; }
+.cap p { margin: 0; font: 400 30px/1.35 var(--text); color: var(--muted); letter-spacing: -0.01em; }
+.cap .tag { justify-self: start; font: 600 22px/1 var(--text); padding: 12px 18px; border-radius: 999px; color: var(--ink); }
+
+/* iPhone */
+.phone { position: absolute; width: 410px; height: 860px; border-radius: 68px; padding: 13px; background: linear-gradient(145deg, #3a3b40, #121316 40%, #2b2c31); box-shadow: inset 0 0 0 2px #4a4b50, 0 60px 120px -40px rgba(20,30,60,.55), 0 20px 40px -20px rgba(20,30,60,.4); }
+.screen { position: relative; height: 100%; border-radius: 56px; overflow: hidden; background: #fff; }
+.island { position: absolute; z-index: 20; top: 12px; left: 50%; width: 118px; height: 34px; margin-left: -59px; border-radius: 20px; background: #000; }
+.sbar { position: absolute; z-index: 19; top: 0; left: 0; right: 0; height: 56px; display: flex; justify-content: space-between; align-items: center; padding: 6px 34px 0 42px; font: 600 17px/1 var(--text); }
+.sbar .icons { display: flex; gap: 6px; align-items: center; }
+.sbar .icons b { display: inline-block; width: 4px; background: currentColor; border-radius: 1px; }
+.sbar .batt { width: 27px; height: 13px; border: 1.5px solid currentColor; border-radius: 4px; padding: 1.5px; opacity: .9; }
+.sbar .batt i { display: block; height: 100%; width: 78%; background: currentColor; border-radius: 1.5px; }
+
+/* Messages thread */
+.hdr { position: absolute; z-index: 10; top: 0; left: 0; right: 0; padding: 60px 0 12px; display: grid; justify-items: center; gap: 5px; background: rgba(248,248,250,.86); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(60,60,67,.14); }
+.hdr .name { font: 500 13px/1 var(--text); color: #111; }
+.hdr .back { position: absolute; left: 18px; top: 84px; width: 13px; height: 22px; border-left: 3px solid var(--blue); border-bottom: 3px solid var(--blue); transform: rotate(45deg); border-radius: 2px; }
+.thread { position: absolute; left: 0; right: 0; bottom: 78px; padding: 0 14px; display: flex; flex-direction: column; justify-content: flex-end; }
+.msg { overflow: hidden; flex: none; }
+.msg > div { padding-bottom: 7px; display: flex; }
+.msg.me > div { justify-content: flex-end; }
+.b { max-width: 78%; padding: 10px 15px; border-radius: 22px; font: 400 18px/1.32 var(--text); letter-spacing: -0.01em; white-space: pre-wrap; }
+.me .b { background: linear-gradient(180deg, #2a95ff, #0a7cf5); color: #fff; border-bottom-right-radius: 7px; }
+.it .b { background: var(--bubble); color: #111; border-bottom-left-radius: 7px; }
+.draft { max-width: 86%; border-radius: 20px; background: #fff; border: 1.5px solid #e2e2e6; padding: 13px 15px; font: 400 17px/1.35 var(--text); box-shadow: 0 6px 18px -10px rgba(0,0,0,.25); }
+.draft .to { font: 600 13px/1 var(--text); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 7px; }
+.draft .yes { margin-top: 10px; font: 600 15px/1 var(--text); color: var(--blue); }
+.inv { width: 86%; border-radius: 20px; background: #fff; border: 1.5px solid #e2e2e6; padding: 15px; display: grid; gap: 6px; box-shadow: 0 6px 18px -10px rgba(0,0,0,.25); }
+.inv .row { display: flex; justify-content: space-between; font: 400 16px/1.3 var(--text); color: var(--muted); }
+.inv .amt { font: 700 34px/1 var(--display); letter-spacing: -0.03em; color: #111; }
+.inv .ap { margin-top: 4px; display: flex; align-items: center; justify-content: center; height: 38px; border-radius: 10px; background: #000; color: #fff; font: 600 16px/1 var(--text); }
+.meta { font: 500 12.5px/1 var(--text); color: #8e8e93; text-align: right; padding: 0 6px 8px; }
+.meta.c { text-align: center; padding: 8px 0 10px; }
+.typing { display: inline-flex; gap: 5px; padding: 14px 16px; border-radius: 22px; background: var(--bubble); }
+.typing i { width: 8px; height: 8px; border-radius: 50%; background: #9a9aa0; }
+.inbar { position: absolute; left: 12px; right: 12px; bottom: 18px; height: 44px; display: flex; align-items: center; gap: 10px; }
+.inbar .plus { width: 34px; height: 34px; border-radius: 50%; background: #eeeef0; display: grid; place-items: center; color: #8e8e93; font: 400 24px/1 var(--text); }
+.inbar .field { flex: 1; height: 40px; border-radius: 20px; border: 1px solid #d6d6db; padding: 0 16px; display: flex; align-items: center; font: 400 17px/1 var(--text); color: #111; white-space: nowrap; overflow: hidden; }
+.inbar .field.ph { color: #b0b0b5; }
+.inbar .field .caret { display: inline-block; width: 2px; height: 20px; background: var(--blue); margin-left: 1px; }
+
+/* Lock screen */
+.lock { position: absolute; inset: 0; z-index: 15; color: #fff; display: grid; justify-items: center; align-content: start; padding-top: 96px; }
+.lock .date { font: 500 19px/1 var(--text); opacity: .92; }
+.lock .clock { font: 700 96px/1 var(--display); letter-spacing: -0.03em; margin-top: 6px; }
+.notif { position: absolute; left: 12px; right: 12px; z-index: 18; border-radius: 26px; padding: 13px 15px; display: grid; grid-template-columns: 38px 1fr; gap: 3px 11px; color: #111; background: rgba(250,250,252,.78); backdrop-filter: blur(24px) saturate(180%); box-shadow: 0 10px 30px -14px rgba(0,0,0,.4); }
+.notif .ic { grid-row: span 2; width: 38px; height: 38px; border-radius: 10px; overflow: hidden; }
+.notif .ic img, .notif .ic svg { width: 100%; height: 100%; display: block; }
+.notif .t { font: 600 15px/1.2 var(--text); display: flex; justify-content: space-between; }
+.notif .t span { font-weight: 400; color: #6e6e73; font-size: 13px; }
+.notif .m { font: 400 15px/1.3 var(--text); }
+
+/* A web page inside a phone (the customer's invoice) */
+.page { position: absolute; inset: 0; background: #f5f5f7; padding: 70px 20px 20px; display: grid; align-content: start; gap: 14px; }
+.page .biz { font: 600 17px/1.2 var(--text); color: #111; }
+.page .card { background: #fff; border-radius: 18px; padding: 18px; display: grid; gap: 10px; box-shadow: 0 2px 10px -6px rgba(0,0,0,.2); }
+.page .big { font: 700 44px/1 var(--display); letter-spacing: -0.03em; }
+.page .applepay { height: 52px; border-radius: 12px; background: #000; color: #fff; display: grid; place-items: center; font: 600 20px/1 var(--text); }
+.page .done { display: grid; justify-items: center; gap: 10px; padding: 20px 0; }
+.page .tick { width: 66px; height: 66px; border-radius: 50%; background: #34c759; display: grid; place-items: center; }
+
+/* Connections hub */
+.hub { position: absolute; width: 210px; height: 210px; border-radius: 50%; display: grid; place-items: center; }
+.hub img { width: 128px; height: 128px; border-radius: 30px; }
+.tile { position: absolute; width: 190px; display: grid; justify-items: center; gap: 12px; }
+.tile.up > .sq { order: 2; }
+.tile .sq { width: 118px; height: 118px; border-radius: 32px; display: grid; place-items: center; color: #fff; font: 700 52px/1 var(--display); box-shadow: inset 0 2px 1px rgba(255,255,255,.4), 0 18px 40px -18px rgba(20,30,60,.5); }
+.tile span { font: 600 26px/1.15 var(--text); text-align: center; color: var(--ink); }
+.tile em { font: 400 21px/1.2 var(--text); font-style: normal; color: var(--muted); text-align: center; margin-top: -6px; }
+svg.links { position: absolute; inset: 0; width: 1920px; height: 1080px; overflow: visible; }
+svg.links path { fill: none; stroke: rgba(10,132,255,.5); stroke-width: 4; stroke-linecap: round; }
+.flow { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 14px 4px rgba(10,132,255,.45); }
+
+/* End card */
+.end { position: absolute; inset: 0; display: grid; place-items: center; }
+.end .card { border-radius: 70px; padding: 80px 140px; display: grid; justify-items: center; gap: 26px; text-align: center; }
+.end .mark { width: 156px; height: 156px; border-radius: 36px; }
+.end .word { font: 700 92px/1 var(--display); letter-spacing: -0.04em; }
+.end .tagline { font: 600 56px/1.12 var(--display); letter-spacing: -0.03em; }
+.end .cta { margin-top: 10px; font: 600 32px/1 var(--text); color: #fff; padding: 22px 38px; border-radius: 999px; background: linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,0) 52%), var(--blue); box-shadow: inset 0 1.5px 1px rgba(255,255,255,.7), 0 18px 36px -16px var(--blue); }
+.end .fine { font: 400 19px/1.3 var(--text); color: var(--muted); }
+.faces { display: flex; }
+.faces .face + .face { margin-left: -14px; }
+.face { display: block; border-radius: 50%; }

@@ -175,6 +175,56 @@
     .count { font-weight: 600; color: var(--ink); }
     @media (max-width: 520px) { .row2 { grid-template-columns: 1fr; } }
 
+    /* Use cases: tabs over a film and the list of work it does */
+    #uses, #how, #connect { scroll-margin-top: 90px; margin-bottom: 64px; }
+    .tabs { display: flex; gap: 4px; padding: 5px; border-radius: 999px; width: max-content; max-width: 100%; margin: 26px auto 18px; overflow-x: auto; }
+    .tabs button { font: 600 15px/1 var(--sans); color: var(--ink); background: none; border: 0; padding: 12px 18px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+    .tabs button[aria-selected="true"] { color: var(--blue-fg); background: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,0) 55%), var(--blue); box-shadow: inset 0 1px 0.5px rgba(255,255,255,.6), 0 8px 18px -10px var(--blue); }
+    .use { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 28px; align-items: center; padding: 18px; border-radius: 36px; }
+    .film { border-radius: 24px; overflow: hidden; background: #000; aspect-ratio: 16 / 9; box-shadow: 0 24px 50px -30px rgba(20, 30, 60, .5); }
+    .film video { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .work { padding: 8px 14px 8px 0; display: grid; gap: 14px; }
+    .work h3 { font-size: 26px; }
+    .work ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+    .work li { padding-left: 26px; position: relative; color: var(--muted); font-size: 16px; line-height: 1.4; }
+    .work li::before { content: ""; position: absolute; left: 0; top: 4px; width: 16px; height: 16px; border-radius: 50%; background: var(--blue); box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--blue) 35%, white); }
+    .work li b { color: var(--ink); font-weight: 600; }
+
+    /* How you use it */
+    .steps { list-style: none; margin: 30px 0 18px; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+    .steps li { border-radius: 28px; padding: 22px; display: grid; gap: 12px; align-content: start; }
+    .steps .n { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: 700 16px/1 var(--round); color: var(--blue-fg); background: var(--blue); }
+    .steps h3 { font-size: 19px; }
+    .steps p { color: var(--muted); font-size: 15px; }
+    .bubble { justify-self: start; max-width: 100%; padding: 9px 14px; border-radius: 18px; font-size: 15px !important; line-height: 1.3; }
+    .bubble.me { justify-self: end; background: var(--blue); color: var(--blue-fg) !important; border-bottom-right-radius: 6px; }
+    .bubble.it { background: var(--gray-bubble); color: var(--gray-fg) !important; border-bottom-left-radius: 6px; }
+
+    /* Connections */
+    .links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 28px; }
+    .link { border-radius: 26px; padding: 18px; display: grid; grid-template-columns: 52px 1fr auto; gap: 16px; align-items: start; }
+    .link .sq { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; color: #fff; font: 700 22px/1 var(--round); box-shadow: inset 0 1.5px 1px rgba(255,255,255,.4), 0 10px 22px -12px rgba(20,30,60,.5); }
+    .link h3 { font-size: 17px; margin-bottom: 4px; }
+    .link p { color: var(--muted); font-size: 15px; line-height: 1.4; }
+    .st { font: 600 12px/1 var(--sans); padding: 7px 10px; border-radius: 999px; white-space: nowrap; }
+    .st.now { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+    .st.beta { color: var(--blue); background: color-mix(in srgb, var(--blue) 13%, transparent); }
+    .st.soon { color: var(--muted); background: var(--hairline); }
+    .sub-h { margin-top: 34px; font-size: 20px; text-align: center; }
+
+    @media (max-width: 960px) {
+      .use { grid-template-columns: 1fr; }
+      .work { padding: 0 6px 6px; }
+      .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .steps, .links { grid-template-columns: 1fr; }
+      .link { grid-template-columns: 44px 1fr; }
+      .link .sq { width: 44px; height: 44px; font-size: 19px; }
+      .link .st { grid-column: 2; justify-self: start; }
+      .tabs { margin-inline: 0; }
+    }
+
     @media (max-width: 860px) {
       .hero { grid-template-columns: 1fr; padding-block: 40px; }
       .roster, .promises, .plans { grid-template-columns: 1fr; }
@@ -191,8 +241,9 @@
 <nav class="rail glass" aria-label="Your path">
   <div class="bar"><b></b></div>
   <a href="#top" data-stop="top" title="See it"><i></i>See it</a>
-  <a href="#meet" data-stop="meet" title="Meet them"><i></i>Meet them</a>
-  <a href="#watch" data-stop="watch" title="Watch them work"><i></i>Watch them work</a>
+  <a href="#uses" data-stop="uses" title="Use cases"><i></i>Use cases</a>
+  <a href="#how" data-stop="how" title="How you use it"><i></i>How you use it</a>
+  <a href="#connect" data-stop="connect" title="Connections"><i></i>Connections</a>
   <a href="#plans" data-stop="plans" title="Pick a plan"><i></i><span class="when-live">Pick a plan</span><span class="when-wait">Pricing</span></a>
   <a href="#start" data-stop="start" title="Your number"><i></i><span class="when-live">Your number</span><span class="when-wait">Get in line</span></a>
 </nav>
@@ -228,51 +279,93 @@
     </div>
   </section>
 
-  <section id="watch" aria-labelledby="watch-h">
+  <section id="uses" aria-labelledby="uses-h">
     <div class="section-head">
-      <p class="eyebrow">Watch them work</p>
-      <h2 id="watch-h">The jobs that slip every week.</h2>
+      <p class="eyebrow">Use cases</p>
+      <h2 id="uses-h">Home, the job, the business. One thread.</h2>
+      <p class="fine">Three short films. Tap one to watch it, sound on.</p>
     </div>
-
-    <article class="scene glass">
-      <div class="copy">
-        <div class="who-row"><span data-face="fol" data-size="30"></span><span class="eyebrow">Follow-up Assistant</span></div>
-        <h3>Your 2pm hears from you before they wonder.</h3>
-        <p class="says">running 15 late to the Johnson job</p>
-        <p>It checks your calendar, drafts a friendly heads-up, sends it when you say yes, and shows you the reply.</p>
+    <div class="tabs glass" role="tablist" aria-label="Use cases">
+      <button role="tab" aria-selected="true" aria-controls="use-home" id="tab-home">Home &amp; life</button>
+      <button role="tab" aria-selected="false" aria-controls="use-trade" id="tab-trade">The trades</button>
+      <button role="tab" aria-selected="false" aria-controls="use-business" id="tab-business">Your business</button>
+    </div>
+    <article class="use glass" id="use-home" role="tabpanel" aria-labelledby="tab-home">
+      <div class="film"><video preload="none" playsinline controls poster="/media/home.jpg" aria-label="Film: Macoma at home"><source src="/media/home.mp4" type="video/mp4"></video></div>
+      <div class="work">
+        <h3>Life admin, handled by text.</h3>
+        <ul>
+          <li><b>Morning brief</b> from your calendar: pickups, appointments, trash night.</li>
+          <li><b>Plans change?</b> It moves the appointment and drafts the text to whoever it affects.</li>
+          <li><b>Repeat reminders</b> for refills, pet food, renewals and bills.</li>
+          <li><b>Replies come back</b> from the sitter, the coach or the landlord, right in the thread.</li>
+          <li><b>Look things up</b> and compare options, with sources.</li>
+        </ul>
       </div>
-      <div class="player" data-scene="late" aria-label="Example: running late"></div>
     </article>
-
-    <article class="scene glass flip">
-      <div class="copy">
-        <div class="who-row"><span data-face="biz" data-size="30"></span><span class="eyebrow">Business Assistant</span></div>
-        <h3>Invoice from the driveway. Paid with Apple Pay.</h3>
-        <p class="says">invoice Dana $450 for the deck stain, due Friday</p>
-        <p>Dana gets a link she pays in one tap. The money goes to your Stripe account and you get a text when it lands.</p>
+    <article class="use glass" id="use-trade" role="tabpanel" aria-labelledby="tab-trade" hidden>
+      <div class="film"><video preload="none" playsinline controls poster="/media/trade.jpg" aria-label="Film: Macoma for the trades"><source src="/media/trade.mp4" type="video/mp4"></video></div>
+      <div class="work">
+        <h3>Built for the truck.</h3>
+        <ul>
+          <li><b>Running late</b>: it finds the job and address on your calendar and drafts the heads-up.</li>
+          <li><b>Invoice from the driveway</b>: say what you did and the price. It goes out with an Apple Pay link.</li>
+          <li><b>Paid alerts</b> the moment money lands in your Stripe account.</li>
+          <li><b>Reorders</b>: mention a supply and it becomes a reminder.</li>
+          <li><b>Quotes don't go cold</b>: it nudges you to follow up, and drafts it.</li>
+        </ul>
       </div>
-      <div class="player" data-scene="invoice" aria-label="Example: invoice paid with Apple Pay"></div>
     </article>
-
-    <article class="scene glass">
-      <div class="copy">
-        <div class="who-row"><span data-face="fol" data-size="30"></span><span class="eyebrow">Follow-up Assistant</span></div>
-        <h3>The quote doesn't go cold.</h3>
-        <p class="says">if the Patels don't answer by Thursday, nudge me</p>
-        <p>It only checks in if they haven't replied, and drafts the message so all you do is say yes.</p>
+    <article class="use glass" id="use-business" role="tabpanel" aria-labelledby="tab-business" hidden>
+      <div class="film"><video preload="none" playsinline controls poster="/media/business.jpg" aria-label="Film: Macoma for your business"><source src="/media/business.mp4" type="video/mp4"></video></div>
+      <div class="work">
+        <h3>Run the business, not the busywork.</h3>
+        <ul>
+          <li><b>Your day in one text</b>: clients, money owed, leads gone quiet.</li>
+          <li><b>Get paid</b> with friendly invoice reminders, written for you.</li>
+          <li><b>Follow-ups</b> drafted for leads before they go cold.</li>
+          <li><b>Customer replies</b> forwarded to you as texts, wherever you are.</li>
+          <li><b>Text LOG</b> to see everything it did, and every YES.</li>
+        </ul>
       </div>
-      <div class="player" data-scene="lead" aria-label="Example: lead follow-up"></div>
     </article>
+  </section>
 
-    <article class="scene glass flip">
-      <div class="copy">
-        <div class="who-row"><span data-face="biz" data-size="30"></span><span class="eyebrow">Business Assistant</span></div>
-        <h3>Never run out mid-job.</h3>
-        <p class="says">remind me to order stain every other Monday at 9</p>
-        <p>Repeats on your schedule and remembers what you ordered last time.</p>
-      </div>
-      <div class="player" data-scene="reorder" aria-label="Example: reorder reminder"></div>
-    </article>
+  <section id="how" aria-labelledby="how-h">
+    <div class="section-head">
+      <p class="eyebrow">How you use it</p>
+      <h2 id="how-h">No app. No dashboard. Just text.</h2>
+    </div>
+    <ol class="steps">
+      <li class="glass"><span class="n">1</span><h3>Text it like a person.</h3><p class="bubble me">running 15 late to johnson</p><p>No commands to learn. Plain words, any time.</p></li>
+      <li class="glass"><span class="n">2</span><h3>It checks what you've connected.</h3><p class="bubble it">Johnson job is 8:15 at 412 Elm (from your calendar).</p><p>Your calendar, contacts and invoices. Only what you link.</p></li>
+      <li class="glass"><span class="n">3</span><h3>It drafts. You say YES.</h3><p class="bubble me">YES</p><p>Nothing reaches another person until you approve the exact words.</p></li>
+      <li class="glass"><span class="n">4</span><h3>It reports back.</h3><p class="bubble it">💸 Dana Johnson paid $450.00</p><p>Replies and payments arrive as texts. Text LOG for the full record.</p></li>
+    </ol>
+    <p class="fine" style="text-align:center">Every plan has a monthly allowance of replies and customer texts. Text PLAN to see where you are. No surprise bills.</p>
+  </section>
+
+  <section id="connect" aria-labelledby="connect-h">
+    <div class="section-head">
+      <p class="eyebrow">Connections &amp; linkups</p>
+      <h2 id="connect-h">Links up with the tools you already use.</h2>
+      <p class="fine">You connect each one in a single tap and can disconnect any time. Macoma only reads what it needs.</p>
+    </div>
+    <div class="links">
+      <article class="link glass"><span class="sq" style="background:#4285f4">C</span><div><h3>Google Calendar</h3><p>Reads today's jobs and appointments, moves them when plans change, and puts the right address in running-late texts.</p></div><span class="st now">At launch</span></article>
+      <article class="link glass"><span class="sq" style="background:#0078d4">O</span><div><h3>Outlook &amp; Microsoft 365</h3><p>The same for your work calendar.</p></div><span class="st now">At launch</span></article>
+      <article class="link glass"><span class="sq" style="background:#635bff">S</span><div><h3>Stripe</h3><p>Sends invoices customers pay with Apple Pay or card, straight to your account, and texts you when they pay.</p></div><span class="st now">At launch</span></article>
+      <article class="link glass"><span class="sq" style="background:#111"><span style="font-size:15px">Pay</span></span><div><h3>Apple Pay</h3><p>Customers pay in one tap from the invoice link. No app or account for them.</p></div><span class="st now">At launch</span></article>
+      <article class="link glass"><span class="sq" style="background:#34c759">T</span><div><h3>Your customers, by text</h3><p>Texts customers and leads for you, signed with your business name, only after your YES. They can reply STOP any time.</p></div><span class="st now">At launch</span></article>
+      <article class="link glass"><span class="sq" style="background:#d93025">M</span><div><h3>Gmail</h3><p>Spots booking requests and supplier receipts. Read-only.</p></div><span class="st soon">Coming soon</span></article>
+      <article class="link glass"><span class="sq" style="background:#2ca01c">qb</span><div><h3>QuickBooks</h3><p>Keeps your books in step with invoices and payments.</p></div><span class="st soon">Coming soon</span></article>
+      <article class="link glass"><span class="sq" style="background:#3e4348"><span style="width:20px;height:20px;border:4px solid #fff;border-radius:5px;display:block"></span></span><div><h3>Square</h3><p>Brings in customers and payments from your point of sale.</p></div><span class="st soon">Coming soon</span></article>
+    </div>
+    <h3 class="sub-h">Agent linkups</h3>
+    <div class="links two">
+      <article class="link glass"><span class="sq" style="background:#5e5ce6">A</span><div><h3>Other AI agents</h3><p>Hands a task to another agent, such as a booking or research, and brings back the answer. Uses the open A2A protocol and asks your OK first.</p></div><span class="st beta">Beta</span></article>
+      <article class="link glass"><span class="sq" style="background:#ff9f0a">$</span><div><h3>Paid web services</h3><p>Pays a few cents for a lookup or service with x402, inside per-task and daily limits you set.</p></div><span class="st beta">Beta</span></article>
+    </div>
   </section>
 
   <section id="plans" aria-labelledby="plans-h">
@@ -616,6 +709,24 @@
     } finally { $("b2").disabled = false; }
   });
   $("back").addEventListener("click", () => { $("code").value = ""; show(0); $("phone").focus(); });
+
+  // --- use-case tabs: one film at a time; switching pauses the one you left ---------------------
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  tabs.forEach((tab) => tab.addEventListener("click", () => {
+    for (const t of tabs) {
+      const on = t === tab, panel = $(t.getAttribute("aria-controls"));
+      t.setAttribute("aria-selected", String(on));
+      panel.hidden = !on;
+      if (!on) panel.querySelector("video")?.pause();
+    }
+  }));
+  // Arrow keys move between tabs, as in any tab list.
+  document.querySelector(".tabs").addEventListener("keydown", (e) => {
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0 || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+    next.focus(); next.click();
+  });
 
   // --- waitlist (before launch) -------------------------------------------------------------
   const answers = { business: null, plan: null, wants: new Set() };
