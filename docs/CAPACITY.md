@@ -1,6 +1,6 @@
-# Running Macoma for 500,000 owners
+# Running Macoma for a million owners
 
-How the system is built to handle 500k owners, what was measured, and what to set up at each size. The cost and timing estimates come from the playbook (`reports/Macoma launch and scale playbook.md`). The test numbers below come from `npm run load-test`.
+How the system is built to handle 500k, then 1,000,000 owners, what was measured, and what to set up at each size. The cost and timing estimates come from the playbook (`reports/Macoma launch and scale playbook.md`). The test numbers below come from `npm run load-test`.
 
 ## The design in one paragraph
 
@@ -21,6 +21,8 @@ All tests ran on one 4-core container, with Postgres 16 on the same machine, a s
 | 10,000 inbound texts to 100,000 seeded owners, 200 at a time | 1,100 texts/s accepted into the queue. Webhook p50 115 ms, p95 280 ms. 0 errors, 0 failed jobs. No owner got a lost, duplicated or out-of-order reply. |
 | Same run, 300 jobs at a time, 3 s model latency | 90 replies/s. That is the limit set by jobs in flight ÷ model time (300 ÷ 3.3 s), not by the database. |
 | 50,000 owners with a reminder due at the same moment | All texted in 24 s (2,100/s), none missed. |
+| **1,000,000 seeded owners**: 20,000 texts, 200 at a time, 400 jobs at a time, 3 s model | 830 texts/s accepted (webhook p50 194 ms, p95 355 ms). 122 replies/s from **one** worker process, which is the whole 1M peak. 0 errors, 0 failed jobs, 0 lost or out-of-order turns. |
+| 100,000 of those owners with a reminder due at the same moment | All texted in 70 s (1,400/s), none missed. The users table was 1.8 GB. |
 | Concurrency checks (`npm run test:store`, embedded and real Postgres) | Two edits to one account both survive. Removals survive concurrent edits. Two schedulers never queue the same owner twice. |
 
 Webhook p99 reached 2–3 s in these runs. That happened because 300 busy workers shared the web process's event loop and connection pool. In production, run web and workers as separate processes (below).
@@ -39,6 +41,19 @@ From the playbook: about 61 inbound texts/s at peak (100/s in bursts) and about 
 - **Morning briefs** are spread over the first 45 minutes of each owner's hour (`DIGEST_SPREAD_MIN`). That way 200k owners in one time zone send about 75 texts/s, not one burst at 8:00.
 - **Twilio:** use a Messaging Service (`TWILIO_MESSAGING_SERVICE_SID`), with a short code as the main sender at Stage 3. Twilio queues beyond your sending rate, and the SDK retries on 429.
 - **Anthropic:** the SDK retries 429 and overload errors with backoff (`ANTHROPIC_MAX_RETRIES`). `AI_CONCURRENCY` caps model calls per process. You need a Custom tier before about 80k owners (see the playbook).
+
+## Sizing for 1,000,000 owners
+
+Double the 500k figures: about 122 texts/s at peak (≈200 in bursts) and ≈490 model calls/s.
+
+- **Jobs in flight:** ≈1,500, or ≈2,400 in a burst. Run 10–14 worker processes at `WORKER_CONCURRENCY=200` (a single process managed 400 in the test, but spread them out so a deploy or crash takes out only a small share).
+- **Web:** 3–4 processes. One shared process took 830 texts/s, so these exist for redundancy, not load.
+- **Postgres:** 8–16 vCPU primary, a standby in another zone, PgBouncer (transaction mode), and a read replica for `/admin` and exports. Keep `DATABASE_POOL_MAX` × processes under the pooler's server-side limit. Real accounts are larger than the test's, so plan on 30–60 GB of data.
+- **Morning briefs:** in the busiest hour (8 AM Eastern) roughly 400k briefs are due. Spread over 45 minutes (`DIGEST_SPREAD_MIN`) that's about 150 texts/s, on top of replies. Sending capacity needs to be about **250+ texts/s** across the short code(s) and backup senders. Raise `DIGEST_SPREAD_MIN` to 60 to shave the peak.
+- **Anthropic:** a Custom tier sized for about 30,000 requests/min, and a second route (Bedrock or Vertex) so an outage at one provider doesn't stop replies (scope of work 5.2).
+- **Account size:** every save rewrites the whole account. History, notes, the action log and old reminders are capped, but contacts and invoices aren't. The server logs any account over 256 KB. Before about 250k owners, move contacts and invoices into their own tables (scope of work 5.1).
+- **Jobs table:** at this size it takes millions of rows a day. Cleanup deletes in 20k batches; past about 20M rows, partition it by day (scope of work 5.6).
+- **Safety limits:** every query has a 15 s limit (`DATABASE_STATEMENT_TIMEOUT_MS`), so a slow query fails fast instead of tying up a connection. Schema changes at deploy run without the limit.
 
 ## Process layout
 
@@ -69,6 +84,9 @@ npm run test:store                                    # embedded Postgres, no se
 DATABASE_URL=postgres://… npm run test:store          # against a scratch database
 DATABASE_URL=postgres://… LOAD_USERS=100000 LOAD_MESSAGES=10000 \
   WORKER_CONCURRENCY=300 AI_CONCURRENCY=300 AI_MOCK_MS=3000 npm run load-test
+# the million-account run (seeding needs the query time limit off)
+DATABASE_URL=postgres://… DATABASE_STATEMENT_TIMEOUT_MS=0 DATABASE_POOL_MAX=40 LOAD_USERS=1000000 \
+  LOAD_MESSAGES=20000 LOAD_REMINDERS=100000 WORKER_CONCURRENCY=400 AI_CONCURRENCY=400 AI_MOCK_MS=3000 npm run load-test
 ```
 
 Use a scratch database. The tests add rows with `+1555…` and `+1777…` numbers.
