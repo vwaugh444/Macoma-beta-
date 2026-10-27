@@ -41,6 +41,7 @@ This plan follows the final playbook, [reports/Macoma launch and scale playbook.
 6. [Stage 2: Up to 10,000 users](#6-stage-2-up-to-10000-users)
 7. [Stage 3: Up to 100,000 users](#7-stage-3-up-to-100000-users)
 8. [Stage 4: Up to 500,000 users](#8-stage-4-up-to-500000-users)
+   - [Stage 5: Up to 1,000,000 users](#8b-stage-5-up-to-1000000-users)
 9. [Connectors window and approvals](#9-connectors-window-and-approvals)
 10. [Apple Pay for the subscription and invoices](#10-apple-pay-for-the-subscription-and-invoices)
 11. [Channel plan: SMS first, then RCS, iMessage only for Macoma's own brand](#11-channel-plan-sms-first-then-rcs-imessage-only-for-macomas-own-brand)
@@ -405,6 +406,23 @@ Also at this stage: confirm the Twilio Business Profile is Approved (10,000 user
 | 4.4 | YOU | Yearly CASA and SOC 2 renewals | Each anniversary | All filed on time | 🔴 |
 
 **Exit criteria:** the 500k load test passes; no daily-cap rejections for a full month; renewals on time.
+
+---
+
+## 8b. Stage 5: Up to 1,000,000 users
+
+**After Stage 4, about 2029** (ESTIMATE). At peak: about 122 texts per second (≈200 in bursts) and ≈490 AI calls per second. AI ≈ $1.9M and SMS ≈ $2.2M a month (ESTIMATE, double the Stage 4 figures; plans and the 40% cost rule keep each account profitable). Sizing and test results are in [CAPACITY.md](CAPACITY.md).
+
+| # | Who | Step | Start when | Done when | Status |
+|---|---|---|---|---|---|
+| 5.1 | BUILD | Move contacts and invoices out of the account record into their own tables, so a busy account's save stays small | ~250,000 users, or when the "account is N KB" warning shows up in logs | Largest account record under 64 KB | 🔴 |
+| 5.2 | BUILD | A second route for Claude (Bedrock or Vertex) that takes over on overload or outage, and per-model worker pools | ~500,000 users | Drill: the primary route off for 10 minutes, replies keep flowing | 🔴 |
+| 5.3 | YOU | Postgres on 8–16 vCPU with a standby in another zone, PgBouncer in front, a read replica for dashboards and exports | ~500,000 users | Restore drill and failover drill pass | 🔴 |
+| 5.4 | YOU | Sending capacity of at least 250 texts/sec across the short code(s) and backup senders (morning briefs alone reach ~110/sec in the busiest hour) | ~600,000 users | No queueing beyond 60 s at the 8 AM Eastern peak | 🔴 |
+| 5.5 | YOU | Anthropic Custom tier sized for ~30,000 requests/min and ~9M output tokens/min at peak, plus 50% headroom | ~700,000 users | Signed | 🔴 |
+| 5.6 | BUILD | Partition the jobs table by day (instead of batched deletes) | Jobs table above ~20M rows | Old days dropped in one step | 🔴 |
+
+**Exit criteria:** the million-account load test passes on production-sized machines; failover and restore drills pass; a full month without send-rate rejections.
 
 ---
 

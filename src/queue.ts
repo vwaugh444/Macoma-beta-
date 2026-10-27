@@ -60,12 +60,23 @@ async function finish(job: Job, err?: unknown) {
   }
 }
 
-// Requeues jobs whose worker died mid-run, and clears out old finished rows.
+// Requeues jobs whose worker died mid-run, and clears out old finished rows. Deletes go in
+// small batches: at a million accounts the jobs table takes millions of rows a day, and one
+// huge DELETE would hold locks and bloat the table while it ran.
+const BATCH = 20_000;
+async function deleteInBatches(sql: string, params: unknown[] = []) {
+  const d = await db();
+  for (let i = 0; i < 50; i++) if ((await d.query(sql, params)).rowCount < BATCH) return;
+}
 async function housekeeping() {
   const d = await db();
   await d.query("UPDATE jobs SET status = 'queued', locked_until = NULL WHERE status = 'running' AND locked_until < now()");
-  await d.query("DELETE FROM jobs WHERE (status = 'done' AND created_at < now() - interval '2 days') OR (status = 'failed' AND created_at < now() - interval '14 days')");
-  await d.query("DELETE FROM rate_limits WHERE bucket < $1", [Math.floor(Date.now() / 60_000) - 48 * 60]);
+  await deleteInBatches(`DELETE FROM jobs WHERE id IN (SELECT id FROM jobs WHERE status IN ('done', 'failed') AND created_at < now() - interval '2 days'
+    AND (status = 'done' OR created_at < now() - interval '14 days') LIMIT ${BATCH})`);
+  await deleteInBatches(`DELETE FROM rate_limits WHERE (key, bucket) IN (SELECT key, bucket FROM rate_limits WHERE bucket < $1 LIMIT ${BATCH})`, [
+    Math.floor(Date.now() / 60_000) - 48 * 60,
+  ]);
+  await d.query("DELETE FROM oauth_states WHERE expires_at < now()");
 }
 
 export async function queueStats() {

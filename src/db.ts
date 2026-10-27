@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS jobs_ready ON jobs (run_at, id) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS jobs_phone_open ON jobs (phone, id) WHERE status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS jobs_finished ON jobs (created_at) WHERE status IN ('done', 'failed');
 
 -- One free trial per number: a hash of each number that has had one, kept after deletion.
 CREATE TABLE IF NOT EXISTS trial_history (phone_hash text PRIMARY KEY, at timestamptz NOT NULL DEFAULT now());
@@ -92,6 +93,7 @@ CREATE INDEX IF NOT EXISTS waitlist_created ON waitlist (created_at);
 CREATE TABLE IF NOT EXISTS oauth_states (state text PRIMARY KEY, doc jsonb NOT NULL, expires_at timestamptz NOT NULL);
 
 CREATE TABLE IF NOT EXISTS rate_limits (key text NOT NULL, bucket bigint NOT NULL, count integer NOT NULL, PRIMARY KEY (key, bucket));
+CREATE INDEX IF NOT EXISTS rate_limits_bucket ON rate_limits (bucket);
 `;
 
 let ready: Promise<Db> | null = null;
@@ -102,11 +104,17 @@ async function connect(): Promise<Db> {
     const pool = new pg.Pool({
       connectionString: process.env.DATABASE_URL,
       max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+      application_name: `macoma-${process.env.ROLE ?? "all"}`,
+      // A stuck query fails fast instead of holding a connection every other request needs.
+      statement_timeout: Number(process.env.DATABASE_STATEMENT_TIMEOUT_MS ?? 15_000),
+      connectionTimeoutMillis: 10_000,
       ssl: process.env.DATABASE_SSL === "false" ? undefined : process.env.DATABASE_URL.includes("localhost") ? undefined : { rejectUnauthorized: false },
     });
     pool.on("error", (err) => console.error("postgres pool", err));
     const db: Db = { query: async (sql, params) => { const r = await pool.query(sql, params as any[]); return { rows: r.rows, rowCount: r.rowCount ?? 0 }; } };
-    await db.query(SCHEMA);
+    // Schema changes can take a while on big tables (a new index on millions of rows), so they
+    // run without the per-query time limit, in one transaction.
+    await db.query(`BEGIN; SET LOCAL statement_timeout = 0; ${SCHEMA}; COMMIT;`);
     return db;
   }
   const { PGlite } = await import("@electric-sql/pglite");

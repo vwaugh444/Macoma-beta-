@@ -131,6 +131,9 @@ export async function tickUser(user: User, sendWelcome: (u: User) => Promise<unk
     if (text && late) missed.push(r.text);
     else if (text) await send(text, "reminder");
   }
+  // Finished one-time reminders are kept 30 days (for "what did I have on Tuesday?"), then
+  // dropped, so a busy account's record doesn't grow forever.
+  user.reminders = user.reminders.filter((r) => !r.done || now - r.dueAt < 30 * 86_400_000);
   if (missed.length) {
     const list = missed.slice(0, 5).map((t) => `• ${t}`).join("\n");
     await send(`While I couldn't text you, these came due:\n${list}${missed.length > 5 ? `\n…and ${missed.length - 5} more` : ""}`, "catch-up");

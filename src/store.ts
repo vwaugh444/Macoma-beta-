@@ -299,9 +299,19 @@ function merge(fresh: User, mine: User, base: User): User {
 
 // --- saving -------------------------------------------------------------------------------------
 
+const BIG_DOC = 256 * 1024;
+const warned = new Set<string>();
+
 async function save(user: User): Promise<void> {
   const d = await db();
   let info = meta.get(user);
+  // Every save rewrites the whole account, so watch for accounts that grow very large
+  // (thousands of contacts or invoices). See docs/CAPACITY.md, "Before 250k users".
+  const size = JSON.stringify(user).length;
+  if (size > BIG_DOC && !warned.has(user.phone)) {
+    warned.add(user.phone);
+    console.warn(`account ${user.phone.slice(0, -4)}xxxx is ${Math.round(size / 1024)} KB; consider moving contacts/invoices to their own tables`);
+  }
   for (let attempt = 0; attempt < 6; attempt++) {
     const next = dueAt(user);
     const r = await d.query(
