@@ -69,7 +69,8 @@ export function exactDraft(user: User, p: Pending): string {
     return inv ? `${invoiceText(user, inv)}\nReply YES to send it or NO to cancel.` : "Reply YES to send or NO to cancel.";
   }
   if (p.type === "web_request") return `${p.payload.method} ${p.payload.url}\nPaid only if it fits your per-call and daily limits. Reply YES to go ahead or NO to cancel.`;
-  if (p.type === "ask_agent") return `Send to the agent at ${p.payload.agent_url}, exactly:\n"${p.payload.message}"\nReply YES to send or NO to cancel.`;
+  if (p.type === "ask_agent")
+    return `Send to ${p.payload.agent_name ? `your agent ${p.payload.agent_name}` : `the agent at ${p.payload.agent_url}`}, exactly:\n"${p.payload.message}"\nReply YES to send or NO to cancel.`;
   return `${p.summary}. Reply YES to confirm or NO to cancel.`;
 }
 

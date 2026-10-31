@@ -76,10 +76,10 @@ export function a2aHandler(run: (text: string, contextId: string) => Promise<str
 
 // --- client -----------------------------------------------------------------
 
-export async function fetchAgentCard(baseUrl: string) {
+export async function fetchAgentCard(baseUrl: string, headers: Record<string, string> = {}) {
   const root = baseUrl.replace(/\/$/, "");
   for (const p of ["/.well-known/agent-card.json", "/.well-known/agent.json"]) {
-    const res = await guardedFetch(root + p).catch(() => null);
+    const res = await guardedFetch(root + p, { headers }).catch(() => null);
     if (res?.ok) return res.json();
   }
   throw new Error(`No A2A agent card found at ${root}`);
@@ -92,10 +92,10 @@ export const plainFetch: Fetcher = async (url, init) => {
   return { status: res.status, body: (await res.text()).slice(0, 8000) };
 };
 
-export function buildMessage(text: string): RequestInit {
+export function buildMessage(text: string, headers: Record<string, string> = {}): RequestInit {
   return {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: crypto.randomUUID(),
@@ -108,8 +108,8 @@ export function buildMessage(text: string): RequestInit {
 }
 
 // `doFetch` decides whether a 402 gets paid (see agent.ts budget checks).
-export async function sendToAgent(card: any, text: string, doFetch: Fetcher = plainFetch): Promise<string> {
-  const { status, body } = await doFetch(card.url, buildMessage(text));
+export async function sendToAgent(card: any, text: string, doFetch: Fetcher = plainFetch, headers: Record<string, string> = {}): Promise<string> {
+  const { status, body } = await doFetch(card.url, buildMessage(text, headers));
   if (status === 402) return `${card.name} requires an x402 payment for this call.`;
 
   const json = JSON.parse(body);

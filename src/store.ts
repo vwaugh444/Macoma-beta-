@@ -68,6 +68,9 @@ export type ActionLog = {
 };
 
 // An Action that needs the owner to reply YES before it runs.
+// An agent the owner linked: its A2A address and, if it needs one, a key (sealed at rest).
+export type LinkedAgent = { id: string; name: string; url: string; token: string | null; cardName: string | null; addedAt: number };
+
 export type Pending = { actionId: string; type: string; summary: string; payload: any; expiresAt: number; shownAt?: number };
 
 export type PlanId = "personal" | "business" | "crew";
@@ -122,6 +125,7 @@ export type User = {
   welcomeSentAt: number | null;
   sessionVersion?: number; // bumped on log out to end every signed-in device
   lastOwnerTextAt?: number; // when we last texted the owner, to know what a YES is answering
+  agents?: LinkedAgent[]; // the owner's own agents (on their VM, Grok, Muse…), reached over A2A
   connectVersion?: number; // bumped when a new connect link is texted, so older links stop working
   status: "pending" | "active" | "suspended";
   billing: Billing;
@@ -188,6 +192,7 @@ function normalize(u: User): User {
   u.billing = { ...newBilling(), ...(u.billing ?? {}) };
   u.usage ??= newUsage(today());
   u.connections ??= {};
+  u.agents ??= [];
   // Only for records written before these fields existed; null is a real value.
   if (u.verifiedAt === undefined) u.verifiedAt = u.consent?.at ?? null;
   if (u.welcomeSentAt === undefined) u.welcomeSentAt = u.status === "active" ? u.createdAt : null;
@@ -274,7 +279,7 @@ function mergeList<T>(fresh: T[], mine: T[], base: T[]): T[] {
   return [...fresh.filter((x) => !removed.has(key(x))), ...added];
 }
 
-const BY_ID = new Set(["contacts", "reminders", "invoices", "actions"]);
+const BY_ID = new Set(["contacts", "reminders", "invoices", "actions", "agents"]);
 const BY_FIELD = new Set(["billing", "settings", "usage", "connections"]);
 
 function merge(fresh: User, mine: User, base: User): User {

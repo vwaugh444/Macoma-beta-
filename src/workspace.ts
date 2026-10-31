@@ -5,6 +5,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import * as billing from "./billing.js";
 import { disconnectAll, endSessions, providerList, userFromSession } from "./connectors.js";
 import { closeAccount } from "./inbound.js";
+import { addAgent, publicAgent, removeAgent } from "./linked-agents.js";
 import { referralCount, update, type User } from "./store.js";
 
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -51,7 +52,22 @@ export function workspaceRoutes(): Router {
         paymentLink: u.settings.paymentLink,
       },
       invite: { url: `${PUBLIC_URL}/?ref=${u.code}`, joined: await referralCount(u.code) },
+      agents: (u.agents ?? []).map(publicAgent),
     });
+  });
+
+  // Linked agents: the owner's own A2A agents (a Grok bot on their VM, their server, Muse…).
+  r.post("/api/me/agents", signedIn, async (req, res) => {
+    const u = (req as Authed).user;
+    try {
+      res.json({ agent: publicAgent(await addAgent(u, req.body ?? {})) });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+  r.post("/api/me/agents/remove", signedIn, (req, res) => {
+    const u = (req as Authed).user;
+    res.json({ ok: removeAgent(u, String(req.body?.id ?? "")) });
   });
 
   r.post("/api/me/preferences", signedIn, (req, res) => {

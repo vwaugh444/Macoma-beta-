@@ -1,0 +1,17 @@
+# The agent bridge plus Caddy, which gets and renews the HTTPS certificate for your domain.
+#   cp .env.example .env   # fill it in
+#   docker compose up -d
+services:
+  agent:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    command: caddy reverse-proxy --from ${AGENT_DOMAIN} --to agent:8080
+    env_file: .env
+    volumes: ["caddy_data:/data"]
+volumes:
+  caddy_data:

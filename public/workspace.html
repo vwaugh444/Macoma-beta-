@@ -130,6 +130,18 @@
       <div class="rows" id="connRows"></div>
     </section>
 
+    <section aria-labelledby="h-agents">
+      <h2 id="h-agents">Your agents</h2>
+      <p class="sub">Link an AI agent you run, such as a Grok bot on your VM, an agent on your server, or Muse. Then text “ask Grok to…”. Every message to it waits for your YES.</p>
+      <div class="rows" id="agentRows"></div>
+      <form class="prefs" id="agentForm" novalidate style="margin-top:14px">
+        <label>Name<input id="a-name" placeholder="Grok" maxlength="40" autocomplete="off"></label>
+        <label>Agent address<span class="hint">Its A2A base URL. It must serve /.well-known/agent-card.json over https.</span><input id="a-url" type="url" inputmode="url" placeholder="https://agent.yourdomain.com" autocomplete="off"></label>
+        <label>Key (optional)<span class="hint">Sent as a bearer token, only to this address. Stored encrypted, never shown again.</span><input id="a-key" type="password" autocomplete="off"></label>
+        <div class="small"><button class="btn" id="a-add" type="submit">Link agent</button></div>
+      </form>
+    </section>
+
     <section aria-labelledby="h-priv">
       <h2 id="h-priv">Data privacy</h2>
       <p class="sub">Manage data from connected services and your account</p>
@@ -280,6 +292,15 @@
       cr.append(row({ tile: INITIAL[p.id] || p.name[0], color: COLORS[p.id] || "#555", name: p.name, desc: p.blurb, ok: p.connected ? `Connected${p.label ? ` · ${p.label}` : ""}` : "", right }));
     }
 
+    // Your agents
+    const ar = $("agentRows"); ar.replaceChildren();
+    if (!me.agents?.length) ar.append(el("p", "empty", "No agents linked yet."));
+    for (const a of me.agents || []) {
+      const b = el("button", "btn line", "Remove"); b.type = "button";
+      b.addEventListener("click", async () => { b.disabled = true; try { await api("/api/me/agents/remove", { id: a.id }); await load(); } catch (e) { flash(e.message, "err"); b.disabled = false; } });
+      ar.append(row({ tile: a.name[0].toUpperCase(), color: "#5e5ce6", name: a.name, desc: `${a.host}${a.cardName && a.cardName !== a.name ? ` · ${a.cardName}` : ""}${a.hasKey ? " · key saved" : ""}`, ok: "Linked", right: b }));
+    }
+
     // Vault
     const vr = $("vaultRows"); vr.replaceChildren();
     if (!me.vault.length) vr.append(el("p", "empty", "Nothing saved yet. Text your assistant “remember that…” and it shows up here."));
@@ -322,6 +343,17 @@
     $("copyInvite").innerHTML = COPY;
     $("shareInvite").hidden = !navigator.share;
   }
+
+  $("agentForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("a-add"); btn.disabled = true; btn.textContent = "Checking…";
+    try {
+      await api("/api/me/agents", { name: $("a-name").value, url: $("a-url").value, token: $("a-key").value });
+      $("agentForm").reset(); flash("Agent linked. Text “ask " + (me?.agents?.length ? "it" : "your agent") + " to …” to use it.");
+      await load();
+    } catch (err) { flash(err.message, "err"); }
+    finally { btn.disabled = false; btn.textContent = "Link agent"; }
+  });
 
   async function load() { me = await api("/api/me"); render(); }
 

@@ -9,6 +9,7 @@ import type { BetaMessageParam, BetaToolUnion, BetaToolResultBlockParam } from "
 import { fetchAgentCard, sendToAgent, plainFetch, type Fetcher } from "./a2a.js";
 import { payAndFetch, quote, walletAddress } from "./x402.js";
 import { assertPublicUrl } from "./netguard.js";
+import { askLinkedAgent, describeAgents, findAgent } from "./linked-agents.js";
 import { counter } from "./queue.js";
 
 // What A2A calls have cost today across all servers, in thousandths of a cent.
@@ -197,8 +198,9 @@ function tools(caller: Caller): BetaToolUnion[] {
     },
     {
       name: "ask_agent",
-      description: "Propose sending a task to another AI agent over the A2A protocol, given its base URL. The owner approves the exact message with YES; the agent's answer is texted to them. Never include details the owner didn't ask to share.",
-      input_schema: obj({ agent_url: { type: "string" }, message: { type: "string" } }, ["agent_url", "message"]),
+      description:
+        "Propose sending a task to an AI agent over the A2A protocol: one of the owner's linked agents by name (`agent`, e.g. \"Grok\"), or any agent by base URL (`agent_url`). The owner approves the exact message with YES; the agent's answer is texted to them. Never include details the owner didn't ask to share.",
+      input_schema: obj({ agent: { type: "string" }, agent_url: { type: "string" }, message: { type: "string" } }, ["message"]),
     },
     {
       name: "remember",
@@ -254,8 +256,14 @@ biz.registerAction("web_request", async (user, p: { url: string; method: string;
   return `${new URL(p.url).host} answered (HTTP ${status}):\n${body.slice(0, 1200)}`;
 });
 
-biz.registerAction("ask_agent", async (user, p: { agent_url: string; message: string }) => {
-  const card = await fetchAgentCard(p.agent_url);
+biz.registerAction("ask_agent", async (user, p: { agent_id?: string; agent_url?: string; message: string }) => {
+  if (p.agent_id) {
+    const linked = (user.agents ?? []).find((a) => a.id === p.agent_id);
+    if (!linked) return "That agent isn't linked anymore, so nothing was sent.";
+    const reply = await askLinkedAgent(linked, p.message, budgetedFetcher(user));
+    return `${linked.name} says:\n${reply.slice(0, 1200)}`;
+  }
+  const card = await fetchAgentCard(p.agent_url!);
   const reply = await sendToAgent(card, p.message, budgetedFetcher(user));
   return `${card.name} says:\n${reply.slice(0, 1200)}`;
 });
@@ -328,6 +336,13 @@ async function runTool(name: string, input: any, caller: Caller): Promise<string
       return "Waiting for the owner's YES. The exact request is shown to them below your reply; the result will be texted when they approve.";
     }
     case "ask_agent": {
+      if (input.agent) {
+        const linked = findAgent(user, String(input.agent));
+        if (!linked) return `No linked agent called "${input.agent}". Linked: ${describeAgents(user) || "none yet (add one in the workspace)"}.`;
+        biz.propose(user, "ask_agent", `Ask ${linked.name}`, { agent_id: linked.id, agent_name: linked.name, message: String(input.message) });
+        return "Waiting for the owner's YES. The exact message is shown to them below your reply; the answer will be texted when they approve.";
+      }
+      if (!input.agent_url) return "Say which agent: one of the owner's linked agents by name, or an agent's URL.";
       const agentUrl = (await assertPublicUrl(String(input.agent_url))).href;
       biz.propose(user, "ask_agent", `Ask agent at ${new URL(agentUrl).host}`, { agent_url: agentUrl, message: String(input.message) });
       return "Waiting for the owner's YES. The exact message is shown to them below your reply; the answer will be texted when they approve.";
@@ -359,6 +374,7 @@ function context(caller: Caller): string {
     u.settings.business && `Business: ${u.settings.business}`,
     u.notes.length && `Things you remember:\n- ${u.notes.join("\n- ")}`,
     u.contacts.length && `Contacts:\n${biz.describeContacts(u)}`,
+    u.agents?.length && `Owner's linked agents (use ask_agent with agent=<name>): ${describeAgents(u)}`,
     u.pending && `Waiting on the owner's YES for: ${u.pending.summary}`,
   ];
   return lines.filter(Boolean).join("\n\n");
