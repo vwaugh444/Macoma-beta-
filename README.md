@@ -172,7 +172,7 @@ You don't need LangChain or LangGraph. The agent loop is Macoma's own, and the j
 | Owner ↔ Macoma elsewhere | SMS today, RCS next | A link to Stripe's page |
 | Macoma → owners' customers | SMS today, RCS next | A link to the invoice page |
 
-Apple's channel requires the customer to start the conversation, registration with Apple, an Apple-approved messaging provider, and an Apple Pay merchant ID. Plan and sources: [docs/MESSAGING_AND_APPLE_PAY.md](docs/MESSAGING_AND_APPLE_PAY.md).
+Apple's channel requires the customer to start the conversation, registration with Apple, an Apple-approved messaging provider, and an Apple Pay merchant ID. Plan and sources: [docs/MESSAGING_AND_APPLE_PAY.md](docs/MESSAGING_AND_APPLE_PAY.md). Apple also requires a live person to be reachable (no bot-only service), and owners' invoices must keep the owner as merchant of record: see [reports/Apple Pay third party payment rules.md](reports/Apple%20Pay%20third%20party%20payment%20rules.md).
 
 ## The website, workspace and dashboard
 
@@ -262,7 +262,7 @@ docs/               plans and guides (below)
 | [bridge/README.md](bridge/README.md) | Run your own agent on a VM |
 | [media/README.md](media/README.md) | The films and how to re-render them |
 | [moat.md](docs/moat.md) · [requirements.md](docs/requirements.md) | Strategy, and requirements based on Instinct's terms |
-| `reports/` | The launch and scale playbook (research) |
+| `reports/` | Research: the launch and scale playbook, and Apple Pay third-party payment rules |
 
 ## What's next
 
