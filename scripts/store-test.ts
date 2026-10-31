@@ -251,6 +251,40 @@ check("the morning brief brings prepared drafts, and the owner can send just som
   assert.ok(u.contacts.find((c) => c.name === "Tom Reyes")!.nudgedAt);
 });
 
+check("pre-approved kinds go out on their own; the rest wait, and purchases hand over the link", async () => {
+  const zones = ["America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Tokyo", "Australia/Sydney", "Asia/Kolkata", "Pacific/Honolulu"];
+  const hourIn = (tz: string) => Number(new Date().toLocaleString("en-US", { timeZone: tz, hour: "numeric", hourCycle: "h23" }));
+  const tz = zones.find((z) => hourIn(z) >= 9 && hourIn(z) <= 19) ?? zones[0];
+  await fresh("+15550000009");
+  await store.unitOfWork(async () => {
+    const u = (await store.getUser("+15550000009"))!;
+    Object.assign(u.settings, { timezone: tz, digestHour: hourIn(tz), business: "Bloom Studio", autoSend: ["payment_reminders"] });
+    const kim = biz.upsertContact(u, { name: "Kim Lee", phone: "+15550007101", kind: "customer" });
+    const inv = biz.createInvoice(u, kim.id, [{ description: "Color", quantity: 1, unitPrice: 180 }], 7);
+    Object.assign(inv, { status: "sent", dueDate: Date.now() - 2 * 86_400_000, payUrl: "https://pay.example/kim" });
+    const tom = biz.upsertContact(u, { name: "Tom Reyes", phone: "+15550007102", kind: "lead" });
+    tom.lastOutboundAt = Date.now() - 4 * 86_400_000;
+    store.update(u);
+  });
+  const before = outbox.length;
+  await store.unitOfWork(async () => sched.tickUser((await store.getUser("+15550000009"))!, async () => {}, (u, b) => sendSms(u.phone, b)));
+  const sent = outbox.slice(before);
+  assert.ok(sent.some((m) => m.to === "+15550007101" && /friendly reminder/.test(m.body)), "payment reminder went out on its own");
+  assert.ok(!sent.some((m) => m.to === "+15550007102"), "the lead check-in waits");
+  const morning = sent.find((m) => m.to === "+15550000009")!.body;
+  assert.match(morning, /Sent for you \(pre-approved\): Kim Lee/);
+  assert.match(morning, /1\. Check in with Tom Reyes/);
+
+  // A prepared purchase: YES returns the merchant's link to pay with Apple Pay.
+  const reply = await store.unitOfWork(async () => {
+    const u = (await store.getUser("+15550000009"))!;
+    biz.propose(u, "purchase", "Buy shears", { merchant: "Salon Supply Co", item: "Shears", totalUsd: 64.18, checkoutUrl: "https://shop.example/checkout/123" });
+    assert.match(biz.exactDraft(u, u.pending!), /Buy Shears from Salon Supply Co for \$64\.18/);
+    return biz.confirmPending(u, () => {});
+  });
+  assert.match(reply, /https:\/\/shop\.example\/checkout\/123/);
+});
+
 check("shared rate limit counts across calls", async () => {
   const results = [];
   for (let i = 0; i < 4; i++) results.push(await queue.allow("test:key", 3));

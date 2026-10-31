@@ -6,6 +6,7 @@ import * as billing from "./billing.js";
 import { disconnectAll, endSessions, providerList, userFromSession } from "./connectors.js";
 import { closeAccount } from "./inbound.js";
 import { addAgent, publicAgent, removeAgent } from "./linked-agents.js";
+import { createKey, listKeys, revokeKey } from "./mcp.js";
 import { referralCount, update, type User } from "./store.js";
 
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -50,9 +51,13 @@ export function workspaceRoutes(): Router {
         timezone: u.settings.timezone,
         digestHour: u.settings.digestHour,
         paymentLink: u.settings.paymentLink,
+        prepare: u.settings.prepare !== false,
+        autoSend: u.settings.autoSend ?? [],
       },
       invite: { url: `${PUBLIC_URL}/?ref=${u.code}`, joined: await referralCount(u.code) },
       agents: (u.agents ?? []).map(publicAgent),
+      apiKeys: await listKeys(u.phone),
+      mcpUrl: `${PUBLIC_URL}/mcp`,
     });
   });
 
@@ -70,6 +75,20 @@ export function workspaceRoutes(): Router {
     res.json({ ok: removeAgent(u, String(req.body?.id ?? "")) });
   });
 
+  // Personal API keys for MCP: shown once at creation, then only the name and prefix.
+  r.post("/api/me/keys", signedIn, async (req, res) => {
+    const u = (req as Authed).user;
+    try {
+      res.json(await createKey(u.phone, String(req.body?.name ?? "").trim() || "My agent"));
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+  r.post("/api/me/keys/revoke", signedIn, async (req, res) => {
+    const u = (req as Authed).user;
+    res.json({ ok: await revokeKey(u.phone, String(req.body?.id ?? "")) });
+  });
+
   r.post("/api/me/preferences", signedIn, (req, res) => {
     const u = (req as Authed).user;
     const b = req.body ?? {};
@@ -85,6 +104,9 @@ export function workspaceRoutes(): Router {
       }
     }
     if ("digestHour" in b) u.settings.digestHour = b.digestHour === null || b.digestHour === "" ? null : Math.max(0, Math.min(23, Number(b.digestHour) | 0));
+    if ("prepare" in b) u.settings.prepare = b.prepare !== false;
+    if ("autoSend" in b && Array.isArray(b.autoSend))
+      u.settings.autoSend = b.autoSend.filter((k: unknown) => k === "confirmations" || k === "payment_reminders");
     if ("paymentLink" in b) {
       const link = clip(b.paymentLink, 300);
       if (link && !/^https:\/\//.test(link)) return res.status(400).json({ error: "Payment links must start with https://" });

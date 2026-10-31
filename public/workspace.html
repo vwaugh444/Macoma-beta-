@@ -142,6 +142,17 @@
       </form>
     </section>
 
+    <section aria-labelledby="h-keys">
+      <h2 id="h-keys">API keys &amp; MCP</h2>
+      <p class="sub">Let your own tools use Macoma: your VM agent, Claude, a Grok bot or Muse. They can text you, add reminders and draft texts or invoices for your YES. They can't pay, delete or send to customers on their own.</p>
+      <div class="rows" id="keyRows"></div>
+      <div class="rows" id="newKey" hidden></div>
+      <form class="prefs" id="keyForm" novalidate style="margin-top:14px">
+        <label>Key name<span class="hint">Shown in front of anything it texts you, e.g. “Grok”</span><input id="k-name" maxlength="40" placeholder="Grok" autocomplete="off"></label>
+        <div class="small"><button class="btn" type="submit">Create key</button></div>
+      </form>
+    </section>
+
     <section aria-labelledby="h-priv">
       <h2 id="h-priv">Data privacy</h2>
       <p class="sub">Manage data from connected services and your account</p>
@@ -181,6 +192,12 @@
         <label>Time zone<select id="p-tz"></select></label>
         <label>Morning brief<select id="p-digest"></select></label>
         <label>Payment link<span class="hint">Used on invoices if you haven't connected Stripe (Square, PayPal, Venmo…)</span><input id="p-pay" type="url" inputmode="url" placeholder="https://"></label>
+        <fieldset style="border:0;padding:0;margin:0;display:grid;gap:8px"><legend style="font-weight:600;font-size:15px;margin-bottom:6px">Prepared for you</legend>
+          <label class="check" style="font-weight:400"><input id="p-prepare" type="checkbox"> Each morning, draft payment reminders, lead check-ins and appointment confirmations for my YES</label>
+          <label class="check" style="font-weight:400"><input id="p-auto-confirm" type="checkbox"> Send appointment confirmations without asking</label>
+          <label class="check" style="font-weight:400"><input id="p-auto-pay" type="checkbox"> Send payment reminders for overdue invoices without asking</label>
+          <span class="hint" style="font-weight:400">Pre-approved texts are still checked for opt-outs and quiet hours, capped per day, and listed in your morning text. Lead check-ins always wait for your YES.</span>
+        </fieldset>
         <div class="small"><button class="btn" type="submit">Save</button></div>
       </form>
     </section>
@@ -301,6 +318,15 @@
       ar.append(row({ tile: a.name[0].toUpperCase(), color: "#5e5ce6", name: a.name, desc: `${a.host}${a.cardName && a.cardName !== a.name ? ` · ${a.cardName}` : ""}${a.hasKey ? " · key saved" : ""}`, ok: "Linked", right: b }));
     }
 
+    // API keys
+    const kr = $("keyRows"); kr.replaceChildren();
+    kr.append(row({ name: "MCP server address", desc: me.mcpUrl, right: copyBtn(me.mcpUrl, "Copy MCP address") }));
+    for (const k of me.apiKeys || []) {
+      const b = el("button", "btn line", "Revoke"); b.type = "button";
+      b.addEventListener("click", async () => { b.disabled = true; try { await api("/api/me/keys/revoke", { id: k.id }); await load(); } catch (e) { flash(e.message, "err"); b.disabled = false; } });
+      kr.append(row({ tile: "K", color: "#1d1d1f", name: k.name, desc: `${k.prefix} · ${k.lastUsedAt ? `last used ${new Date(k.lastUsedAt).toLocaleDateString()}` : "not used yet"}`, right: b }));
+    }
+
     // Vault
     const vr = $("vaultRows"); vr.replaceChildren();
     if (!me.vault.length) vr.append(el("p", "empty", "Nothing saved yet. Text your assistant “remember that…” and it shows up here."));
@@ -325,6 +351,9 @@
     $("p-name").value = me.preferences.name || "";
     $("p-business").value = me.preferences.business || "";
     $("p-pay").value = me.preferences.paymentLink || "";
+    $("p-prepare").checked = me.preferences.prepare;
+    $("p-auto-confirm").checked = me.preferences.autoSend.includes("confirmations");
+    $("p-auto-pay").checked = me.preferences.autoSend.includes("payment_reminders");
     const tz = $("p-tz");
     if (!tz.options.length) {
       const zones = Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone").filter((z) => /^(America|Pacific|Europe|Australia|Asia)\//.test(z)) : [me.preferences.timezone];
@@ -353,6 +382,15 @@
       await load();
     } catch (err) { flash(err.message, "err"); }
     finally { btn.disabled = false; btn.textContent = "Link agent"; }
+  });
+
+  $("keyForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const k = await api("/api/me/keys", { name: $("k-name").value });
+      const box = $("newKey"); box.hidden = false; box.replaceChildren(row({ tile: "!", color: "#ff9f0a", name: "Copy this key now. It won't be shown again.", desc: k.key, right: copyBtn(k.key, "Copy key") }));
+      $("keyForm").reset(); await load();
+    } catch (err) { flash(err.message, "err"); }
   });
 
   async function load() { me = await api("/api/me"); render(); }
@@ -399,7 +437,8 @@
   $("prefs").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      await api("/api/me/preferences", { name: $("p-name").value, business: $("p-business").value, timezone: $("p-tz").value, digestHour: $("p-digest").value, paymentLink: $("p-pay").value });
+      await api("/api/me/preferences", { name: $("p-name").value, business: $("p-business").value, timezone: $("p-tz").value, digestHour: $("p-digest").value, paymentLink: $("p-pay").value,
+        prepare: $("p-prepare").checked, autoSend: [$("p-auto-confirm").checked && "confirmations", $("p-auto-pay").checked && "payment_reminders"].filter(Boolean) });
       await load(); flash("Saved.");
     } catch (err) { flash(err.message, "err"); }
   });

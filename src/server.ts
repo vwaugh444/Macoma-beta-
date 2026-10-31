@@ -14,6 +14,7 @@ import * as billing from "./billing.js";
 import { connectorRoutes, connectToken, startSession, whoIs } from "./connectors.js";
 import { workspaceRoutes } from "./workspace.js";
 import { waitlistRoutes } from "./waitlist.js";
+import { mcpRoutes } from "./mcp.js";
 import { stripeEnabled, type Stripe } from "./stripeClient.js";
 import { startScheduler } from "./scheduler.js";
 import { allow, enqueue, queueStats, startWorkers, stopWorkers } from "./queue.js";
@@ -101,6 +102,7 @@ app.use((_req, res, next) => {
 });
 
 app.use(waitlistRoutes());
+app.use(mcpRoutes());
 app.use(connectorRoutes(sendWelcome));
 app.use(workspaceRoutes());
 

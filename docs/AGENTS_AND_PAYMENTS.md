@@ -17,7 +17,7 @@ Status as of October 2026. The Stripe agent-payment details come from search res
 | **Macoma → your agent** | Workspace → **Your agents**: name, A2A address and an optional key. Text "ask Grok to…". Macoma shows the exact message, you reply YES, and the answer comes back as a text. | ✅ Built (`src/linked-agents.ts`) |
 | **The agent on your VM** | `bridge/`: one file plus Docker and Caddy. It puts Grok (xAI's OpenAI-compatible API) or any OpenAI-style model behind A2A, with a bearer key and short conversation memory. | ✅ Built (`bridge/README.md`) |
 | **Other agents → Macoma** | `POST /a2a` with an agent card. Research tools only, no access to anyone's account; paid via x402 or capped when free. | ✅ Built |
-| **Your agent → you, through Macoma** | Your VM agent texts you ("your order shipped") or adds a reminder, with a per-user key. | 🔴 Not built. It needs per-user A2A keys and a scope list (what an outside agent may do on an account). |
+| **Your agent → you, through Macoma** | Your VM agent (or Claude, Grok, Muse) connects to Macoma's MCP server with a personal API key. It can text you, add reminders, and draft texts or invoices for your YES. | ✅ Built (`src/mcp.ts`, see `docs/MODELS_AND_MCP.md`) |
 
 ### Safety built in
 
@@ -52,7 +52,7 @@ For an agent that operates a browser on the VM (filling forms, placing orders), 
 
 | Pattern | How it works | Available |
 |---|---|---|
-| **1. AI prepares, you tap** | The agent finds the item and the merchant and texts you the checkout link. You pay with Apple Pay. | Today, at any merchant. Macoma can do this now (it's just a link). |
+| **1. AI prepares, you tap** | The agent prepares the purchase (merchant, item, total, link) within your per-purchase limit. After your YES you get the link and pay with Apple Pay. | ✅ Built (`prepare_purchase`). The limit is `PURCHASE_CAP_USD` (default $250); text "set my purchase limit to $…" to change it. |
 | **2. Scoped one-time credentials** | You approve one purchase (merchant, amount). The agent gets a credential that only works for that purchase:<br>• Stripe's **Shared Payment Tokens** (from the Agentic Commerce Protocol, ACP), with merchants on Stripe's Agentic Commerce Suite;<br>• a single-use card from Stripe's **Issuing for agents**;<br>• the agent wallet in Stripe's **Link**, where you approve in the Link app. | Reported as public or private **preview** during 2026. Apply to Stripe for access. |
 | **3. Micro-payments for agent services** | A few cents to an API or another agent, in USDC, over x402, inside per-task and daily caps. | ✅ Built (`pay_and_fetch`) |
 

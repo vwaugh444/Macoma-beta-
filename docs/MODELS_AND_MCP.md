@@ -33,7 +33,7 @@ The numbers in that example are placeholders. Use xAI's current prices.
 | | Claude | Grok |
 |---|---|---|
 | Tool calling | Anthropic tool use | OpenAI-style function calling (xAI's API is OpenAI-compatible) |
-| Web search | Built in (Claude's server-side search) | Off. Add a search tool (for example a search API) if you need it. |
+| Web search | Built in (Claude's server-side search) | Set `BRAVE_SEARCH_API_KEY` to add a search tool (Brave Search API). Without it, there's no search. |
 | Reasoning setting | Adaptive thinking, `AGENT_EFFORT` | The model's defaults |
 | Safety fallback | A second model takes over if a safety check declines | None |
 | Retries | SDK, with backoff | Same backoff on 429 and 5xx (`ANTHROPIC_MAX_RETRIES` applies to both) |
@@ -49,7 +49,12 @@ The Grok path was tested against a stand-in server in the OpenAI format: tools s
 
 MCP (Model Context Protocol) helps in two other cases:
 
-1. **Other assistants using Macoma.** Expose Macoma as an MCP server so an owner's Claude, ChatGPT, Grok app or Muse can call "add reminder", "draft invoice" or "list overdue invoices" on their account. That needs a per-user OAuth sign-in and the same YES step for anything that sends. Not built. It's the natural next linkup after A2A.
+1. **Other assistants using Macoma: built.** Owners create a personal API key in Workspace → **API keys & MCP**. Any MCP client (their VM agent, Claude, a Grok bot, Muse) then connects to `https://<your site>/mcp` with `Authorization: Bearer mk_…`. Tools:
+   - `text_me`: up to 20 a day, shown with the key's name;
+   - `add_reminder`, `list_reminders`, `list_contacts`, `save_contact`, `list_invoices`, `get_brief`;
+   - `draft_text_to_contact` and `draft_invoice`: the owner gets the exact draft and replies YES.
+
+   Keys can't pay, delete or send to customers on their own. Only a hash of each key is stored, keys can be revoked any time, and calls are rate-limited and logged. MCP clients that only support OAuth sign-in need an OAuth layer added later.
 2. **Macoma using other companies' tools.** Many services publish MCP servers (Stripe, calendars, CRMs). Macoma could connect to them instead of a custom integration for each. Each one needs care: what it can read, and what it may do without a YES.
 
 For agent-to-agent work (your VM agent, Grok bots, other agents), A2A is already built. See `docs/AGENTS_AND_PAYMENTS.md`.
@@ -77,8 +82,11 @@ Reply YES to send all, the numbers to send some (like 1 3), or NO to skip.
 
 Nothing goes out until the owner replies. Each text is checked again at send time (opt-outs, quiet hours, the customer-text allowance), signed with the business name, and logged. People Macoma just nudged aren't nagged again. The drafts stay ready for 14 hours, and owners can turn this off by texting "stop preparing drafts". Code: `src/proactive.ts`.
 
+### Pre-approved texts: built
+
+Owners can pre-approve **appointment confirmations** and/or **payment reminders**, in workspace preferences or by text ("send my appointment confirmations without asking"). Those go out on their own each morning, capped at `AUTO_SEND_PER_DAY` (10). They're still checked for opt-outs and quiet hours, and listed in the morning text ("Sent for you (pre-approved): Kim Lee"). Lead check-ins always wait for YES.
+
 ### Where to take it next
 
-- **Standing approvals:** let an owner pre-approve one low-risk kind of text, such as appointment confirmations, so it goes out on its own within limits, with a daily summary.
 - **More signals:** booking requests in Gmail, low stock from Square, repeat orders (when someone reorders every 3 weeks, suggest the next one).
 - **Evening pass:** confirm tomorrow's appointments the night before.

@@ -71,6 +71,9 @@ export type ActionLog = {
 
 // An Action that needs the owner to reply YES before it runs.
 // An agent the owner linked: its A2A address and, if it needs one, a key (sealed at rest).
+// Prepared texts an owner may pre-approve. Lead check-ins are never on this list: they always wait for YES.
+export type AutoSendKind = "confirmations" | "payment_reminders";
+
 export type LinkedAgent = { id: string; name: string; url: string; token: string | null; cardName: string | null; addedAt: number };
 
 export type Pending = { actionId: string; type: string; summary: string; payload: any; expiresAt: number; shownAt?: number };
@@ -145,6 +148,8 @@ export type User = {
     lastDigestDay: string | null;
     allowTraining: false; // we don't train models on user data; kept explicit for the record
     prepare?: boolean; // morning "prepared for you" drafts (default on)
+    autoSend?: AutoSendKind[]; // kinds of prepared texts the owner pre-approved to go out on their own
+    purchaseCapUsd?: number; // most Macoma may prepare for one purchase (default PURCHASE_CAP_USD)
   };
   notes: string[];
   history: Turn[];
@@ -444,6 +449,7 @@ export async function deleteUser(phone: string) {
   const d = await db();
   await d.query("DELETE FROM users WHERE phone = $1", [phone]);
   await d.query("DELETE FROM contact_index WHERE owner_phone = $1", [phone]);
+  await d.query("DELETE FROM api_keys WHERE phone = $1", [phone]);
   const u = unit.getStore();
   if (u) {
     const cached = u.cache.get(phone);

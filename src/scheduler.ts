@@ -3,7 +3,7 @@
 // Nothing scans every account. Each save stores the owner's next due time in an indexed
 // column (users.next_due_at); this loop asks Postgres for owners that are due and queues
 // one "tick" job each, which runs in that owner's lane like an inbound text.
-import { bundleText, fmtDate, nextOccurrence, propose } from "./business.js";
+import { bundleText, fmtDate, nextOccurrence, propose, sendPrepared } from "./business.js";
 import { prepareDrafts } from "./proactive.js";
 import { trialReminder } from "./billing.js";
 import crypto from "node:crypto";
@@ -11,6 +11,7 @@ import { queueDueTicks, setDueIndexer, update, type Reminder, type User } from "
 
 const POLL_MS = 15_000;
 const CATCH_UP_AFTER_MS = 6 * 3_600_000;
+const AUTO_SEND_PER_DAY = Number(process.env.AUTO_SEND_PER_DAY ?? 10);
 const WELCOME_FALLBACK_MS = 15 * 60_000;
 const TRIAL_NOTICE_MS = 3 * 86_400_000;
 const SLOT_MS = 15 * 60_000; // time zones are offset by whole quarter hours
@@ -90,7 +91,7 @@ function reminderText(user: User, r: Reminder): string | null {
   }
 }
 
-function brief(user: User): string | null {
+export function brief(user: User): string | null {
   const endOfDay = Date.now() + 24 * 3_600_000;
   const dueToday = user.reminders.filter((r) => !r.done && r.dueAt <= endOfDay);
   const overdue = user.invoices.filter((i) => i.status === "sent" && i.dueDate < Date.now());
@@ -149,13 +150,26 @@ export async function tickUser(user: User, sendWelcome: (u: User) => Promise<unk
   const d = nextDigestAt(user, now);
   if (d !== null && d <= now) {
     user.settings.lastDigestDay = local(user.settings.timezone, now).day;
-    let text = brief(user);
     // Prepared for you: drafts that need sending, held for one YES (never over another pending draft).
-    const items = user.pending ? [] : await prepareDrafts(user, now).catch((err) => (console.error("prepare drafts", err), []));
+    let items = user.pending ? [] : await prepareDrafts(user, now).catch((err) => (console.error("prepare drafts", err), []));
+    // Kinds the owner pre-approved go out now (capped per day); the rest wait for YES.
+    const pre = new Set<string>((user.settings.autoSend ?? []).map((k) => (k === "confirmations" ? "confirm" : "invoice")));
+    const auto = items.filter((it) => pre.has(it.kind)).slice(0, AUTO_SEND_PER_DAY);
+    items = items.filter((it) => !auto.includes(it));
+    const parts: string[] = [];
+    if (auto.length) {
+      const { sent, skipped } = await sendPrepared(user, auto);
+      if (sent.length) parts.push(`Sent for you (pre-approved): ${sent.join(", ")}.`);
+      if (skipped.length) parts.push(`Couldn't send: ${skipped.join("; ")}.`);
+    }
     if (items.length) {
       propose(user, "bundle", `${items.length} prepared text${items.length > 1 ? "s" : ""}`, { items }, 14 * 3_600_000);
+      parts.push(`I got these ready for you:\n${bundleText(items)}`);
+    }
+    let text = brief(user);
+    if (parts.length) {
       const head = (text ?? `Good morning${user.settings.name ? `, ${user.settings.name}` : ""}.`).replace(/\nReply with what to handle first\.$/, "");
-      text = `${head}\n\nI got these ready for you:\n${bundleText(items)}`;
+      text = [head, ...parts].join("\n\n");
     }
     if (text) await send(text, "digest");
     if (items.length && user.pending) user.pending.shownAt = user.lastOwnerTextAt; // what a YES now answers

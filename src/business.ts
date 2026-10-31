@@ -42,7 +42,7 @@ export function recentActions(user: User, n = 8): string {
 
 // --- confirmation gate ----------------------------------------------------------
 
-type PendingType = "message_contact" | "send_invoice" | "delete_account" | "web_request" | "ask_agent" | "bundle";
+type PendingType = "message_contact" | "send_invoice" | "delete_account" | "web_request" | "ask_agent" | "bundle" | "purchase";
 
 // Actions defined elsewhere (agent.ts) that also wait for YES. Registered to avoid a circular import.
 const actions = new Map<string, (user: User, payload: any) => Promise<string>>();
@@ -69,6 +69,8 @@ export function exactDraft(user: User, p: Pending): string {
     return inv ? `${invoiceText(user, inv)}\nReply YES to send it or NO to cancel.` : "Reply YES to send or NO to cancel.";
   }
   if (p.type === "bundle") return bundleText(p.payload.items);
+  if (p.type === "purchase")
+    return `Buy ${p.payload.item} from ${p.payload.merchant} for $${Number(p.payload.totalUsd).toFixed(2)}. Reply YES and I'll send the checkout link; you pay there with Apple Pay or a card. NO to cancel.`;
   if (p.type === "web_request") return `${p.payload.method} ${p.payload.url}\nPaid only if it fits your per-call and daily limits. Reply YES to go ahead or NO to cancel.`;
   if (p.type === "ask_agent")
     return `Send to ${p.payload.agent_name ? `your agent ${p.payload.agent_name}` : `the agent at ${p.payload.agent_url}`}, exactly:\n"${p.payload.message}"\nReply YES to send or NO to cancel.`;
@@ -105,6 +107,12 @@ export async function confirmPending(user: User, onDeleteAccount: () => Promise<
         break;
       case "bundle":
         result = await deliverBundle(user, p.payload.items, pick);
+        break;
+      // Today the owner pays on the merchant's page (Apple Pay needs their Face ID). When Stripe's
+      // agent payments (one-time card or Shared Payment Token) are enabled, this is where Macoma
+      // would get a credential capped at this total for this merchant and complete checkout.
+      case "purchase":
+        result = `Here's the checkout for ${p.payload.item} at ${p.payload.merchant}: ${p.payload.checkoutUrl}\nPay there with Apple Pay. Tell me when it's done and I'll note it.`;
         break;
       case "delete_account":
         setActionStatus(user, p.actionId, "done");
@@ -194,7 +202,7 @@ export const signed = (user: User, text: string) => `${text}\n\n– ${signature(
 
 // --- prepared bundles: several drafts, one YES ------------------------------------------------
 
-export type BundleItem = { contactId: string; text: string; label: string; invoiceId?: string };
+export type BundleItem = { contactId: string; text: string; label: string; kind: "confirm" | "invoice" | "lead"; invoiceId?: string };
 
 export function bundleText(items: BundleItem[]): string {
   const lines = items.map((it, i) => `${i + 1}. ${it.label}\n"${it.text.split("\n\n– ")[0]}"`);
@@ -204,6 +212,12 @@ export function bundleText(items: BundleItem[]): string {
 async function deliverBundle(user: User, items: BundleItem[], pick?: number[]): Promise<string> {
   const chosen = pick?.length ? items.filter((_, i) => pick.includes(i + 1)) : items;
   if (!chosen.length) return "None of those numbers matched, so nothing was sent.";
+  const { sent, skipped } = await sendPrepared(user, chosen);
+  return [sent.length && `Sent to ${sent.join(", ")} ✓`, skipped.length && `Skipped: ${skipped.join("; ")}`].filter(Boolean).join("\n");
+}
+
+// Sends prepared texts one by one; each is re-checked (opt-outs, quiet hours, allowance) as it goes.
+export async function sendPrepared(user: User, chosen: BundleItem[]): Promise<{ sent: string[]; skipped: string[] }> {
   const sent: string[] = [], skipped: string[] = [];
   for (const it of chosen) {
     const c = user.contacts.find((x) => x.id === it.contactId);
@@ -218,7 +232,7 @@ async function deliverBundle(user: User, items: BundleItem[], pick?: number[]): 
     }
   }
   update(user);
-  return [sent.length && `Sent to ${sent.join(", ")} ✓`, skipped.length && `Skipped: ${skipped.join("; ")}`].filter(Boolean).join("\n");
+  return { sent, skipped };
 }
 
 function signature(user: User) {

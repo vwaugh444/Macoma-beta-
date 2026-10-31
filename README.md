@@ -124,7 +124,11 @@ With `LAUNCH_MODE=waitlist` the homepage ends in a waitlist instead of sign-up. 
 - **MCP isn't needed** to run Macoma. It's how other assistants could use Macoma's tools later.
 - **Prepared for you:** each morning Macoma drafts overdue-invoice reminders, lead check-ins and appointment confirmations, held for one YES (or "1 3" to send some).
 
-Details: [docs/MODELS_AND_MCP.md](docs/MODELS_AND_MCP.md). Linking your own agents (a Grok bot on your VM) and how AI pays: [docs/AGENTS_AND_PAYMENTS.md](docs/AGENTS_AND_PAYMENTS.md).
+- **MCP server:** owners create a personal API key, and their VM agent, Claude, Grok or Muse can text them, add reminders and draft for their YES at `/mcp`.
+- **Pre-approved texts:** appointment confirmations and payment reminders can go out on their own, within daily limits.
+- **Buying:** Macoma prepares the purchase within a per-purchase limit, and the owner pays with Apple Pay.
+
+Details: [docs/MODELS_AND_MCP.md](docs/MODELS_AND_MCP.md). Messaging channels and Apple Pay (Apple Messages for Business, SMS, RCS): [docs/MESSAGING_AND_APPLE_PAY.md](docs/MESSAGING_AND_APPLE_PAY.md). Linking your own agents (a Grok bot on your VM) and how AI pays: [docs/AGENTS_AND_PAYMENTS.md](docs/AGENTS_AND_PAYMENTS.md).
 
 ## Running at scale
 

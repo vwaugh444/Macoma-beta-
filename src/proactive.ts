@@ -38,7 +38,7 @@ export async function prepareDrafts(user: User, now = Date.now()): Promise<Bundl
       const c = await textable(user.contacts.find((x) => (x.kind === "customer" || x.kind === "lead") && title.includes(x.name.toLowerCase())));
       if (!c || recently(c.nudgedAt, now, 0.8)) continue;
       const time = new Date(e.start).toLocaleTimeString("en-US", { timeZone: user.settings.timezone, hour: "numeric", minute: "2-digit" });
-      add(c, { label: `Confirm today's ${time} with ${c.name}`, text: signed(user, `Hi ${first(c)}, confirming today at ${time}${e.where ? ` (${e.where.slice(0, 60)})` : ""}. Reply here if anything changes.`) });
+      add(c, { kind: "confirm", label: `Confirm today's ${time} with ${c.name}`, text: signed(user, `Hi ${first(c)}, confirming today at ${time}${e.where ? ` (${e.where.slice(0, 60)})` : ""}. Reply here if anything changes.`) });
     }
   }
 
@@ -48,6 +48,7 @@ export async function prepareDrafts(user: User, now = Date.now()): Promise<Bundl
     const c = await textable(user.contacts.find((x) => x.id === inv.contactId));
     if (!c) continue;
     add(c, {
+      kind: "invoice",
       label: `Payment reminder to ${c.name} (${inv.number}, $${inv.total.toFixed(2)})`,
       invoiceId: inv.id,
       text: signed(user, `Hi ${first(c)}, a friendly reminder that ${inv.number} for $${inv.total.toFixed(2)} was due ${fmtDate(user, inv.dueDate)}.${inv.payUrl ? ` You can pay here: ${inv.payUrl}` : ""} Thank you!`),
@@ -59,7 +60,7 @@ export async function prepareDrafts(user: User, now = Date.now()): Promise<Bundl
     if (c.kind !== "lead" || !c.lastOutboundAt || now - c.lastOutboundAt < 3 * DAY) continue;
     if ((c.lastInboundAt ?? 0) > c.lastOutboundAt || recently(c.nudgedAt, now, 7)) continue;
     if (!(await textable(c))) continue;
-    add(c, { label: `Check in with ${c.name} (lead, quiet ${Math.floor((now - c.lastOutboundAt) / DAY)} days)`, text: signed(user, `Hi ${first(c)}, just checking in. Any questions I can answer, or a time that works for you?`) });
+    add(c, { kind: "lead", label: `Check in with ${c.name} (lead, quiet ${Math.floor((now - c.lastOutboundAt) / DAY)} days)`, text: signed(user, `Hi ${first(c)}, just checking in. Any questions I can answer, or a time that works for you?`) });
   }
   return items;
 }

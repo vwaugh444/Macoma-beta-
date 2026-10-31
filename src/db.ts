@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS waitlist (
 );
 CREATE INDEX IF NOT EXISTS waitlist_created ON waitlist (created_at);
 
+-- Personal API keys: an owner's own tools (their VM agent, Claude, Grok, Muse) using their
+-- Macoma over MCP. Only a hash of the secret is stored.
+CREATE TABLE IF NOT EXISTS api_keys (
+  id text PRIMARY KEY,
+  phone text NOT NULL,
+  name text NOT NULL,
+  hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_used_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS api_keys_phone ON api_keys (phone);
+
 CREATE TABLE IF NOT EXISTS oauth_states (state text PRIMARY KEY, doc jsonb NOT NULL, expires_at timestamptz NOT NULL);
 
 CREATE TABLE IF NOT EXISTS rate_limits (key text NOT NULL, bucket bigint NOT NULL, count integer NOT NULL, PRIMARY KEY (key, bucket));
