@@ -3,7 +3,8 @@
 // Nothing scans every account. Each save stores the owner's next due time in an indexed
 // column (users.next_due_at); this loop asks Postgres for owners that are due and queues
 // one "tick" job each, which runs in that owner's lane like an inbound text.
-import { fmtDate, nextOccurrence } from "./business.js";
+import { bundleText, fmtDate, nextOccurrence, propose } from "./business.js";
+import { prepareDrafts } from "./proactive.js";
 import { trialReminder } from "./billing.js";
 import crypto from "node:crypto";
 import { queueDueTicks, setDueIndexer, update, type Reminder, type User } from "./store.js";
@@ -148,8 +149,16 @@ export async function tickUser(user: User, sendWelcome: (u: User) => Promise<unk
   const d = nextDigestAt(user, now);
   if (d !== null && d <= now) {
     user.settings.lastDigestDay = local(user.settings.timezone, now).day;
-    const text = brief(user);
+    let text = brief(user);
+    // Prepared for you: drafts that need sending, held for one YES (never over another pending draft).
+    const items = user.pending ? [] : await prepareDrafts(user, now).catch((err) => (console.error("prepare drafts", err), []));
+    if (items.length) {
+      propose(user, "bundle", `${items.length} prepared text${items.length > 1 ? "s" : ""}`, { items }, 14 * 3_600_000);
+      const head = (text ?? `Good morning${user.settings.name ? `, ${user.settings.name}` : ""}.`).replace(/\nReply with what to handle first\.$/, "");
+      text = `${head}\n\nI got these ready for you:\n${bundleText(items)}`;
+    }
     if (text) await send(text, "digest");
+    if (items.length && user.pending) user.pending.shownAt = user.lastOwnerTextAt; // what a YES now answers
   }
 }
 

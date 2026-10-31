@@ -399,11 +399,11 @@ async function disconnect(user: User, providerId: string) {
 // --- what the agent can read ---------------------------------------------------------------
 
 // Event text comes from whoever sent the invite, so it is returned as quoted data only.
-export async function agenda(user: User, days: number): Promise<string> {
-  const from = new Date();
-  const to = new Date(from.getTime() + Math.min(14, Math.max(1, days)) * 86_400_000);
-  type Ev = { start: string; title: string; where: string };
-  let events: Ev[] = [];
+export type CalendarEvent = { start: string; title: string; where: string };
+
+// Events from the owner's connected calendar (Google first, then Microsoft), or [] if none.
+export async function calendarEvents(user: User, from: Date, to: Date): Promise<CalendarEvent[]> {
+  let events: CalendarEvent[] = [];
   if (user.connections.google_calendar) {
     const token = await accessToken(user, "google_calendar");
     const q = new URLSearchParams({ timeMin: from.toISOString(), timeMax: to.toISOString(), singleEvents: "true", orderBy: "startTime", maxResults: "25" });
@@ -416,9 +416,15 @@ export async function agenda(user: User, days: number): Promise<string> {
     const res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarView?${q}`, { headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.timezone="UTC"' } });
     const json = (await res.json()) as { value?: any[] };
     events = (json.value ?? []).map((e) => ({ start: `${e.start?.dateTime}Z`, title: e.subject ?? "(no title)", where: e.location?.displayName ?? "" }));
-  } else {
-    throw new Error("No calendar connected. Text CONNECT for the link.");
   }
+  return events;
+}
+
+export async function agenda(user: User, days: number): Promise<string> {
+  if (!user.connections.google_calendar && !user.connections.microsoft) throw new Error("No calendar connected. Text CONNECT for the link.");
+  const from = new Date();
+  const to = new Date(from.getTime() + Math.min(14, Math.max(1, days)) * 86_400_000);
+  const events = await calendarEvents(user, from, to);
   if (!events.length) return "No events in that window.";
   const clip = (s: string) => s.replace(/\s+/g, " ").slice(0, 120);
   const lines = events.map((e) => {

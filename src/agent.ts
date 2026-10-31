@@ -106,6 +106,7 @@ function tools(caller: Caller): BetaToolUnion[] {
         timezone: { type: "string", description: "IANA name, e.g. America/Chicago" },
         payment_link: { type: "string" },
         digest_hour: { type: "integer" },
+        prepared_drafts: { type: "boolean", description: "Morning drafts Macoma prepares on its own (payment reminders, lead check-ins, appointment confirmations). Off = false." },
       }),
     },
     {
@@ -286,6 +287,7 @@ async function runTool(name: string, input: any, caller: Caller): Promise<string
       if (input.business) s.business = input.business;
       if (input.payment_link) s.paymentLink = input.payment_link;
       if (input.digest_hour !== undefined) s.digestHour = input.digest_hour < 0 ? null : Math.min(23, input.digest_hour);
+      if (typeof input.prepared_drafts === "boolean") s.prepare = input.prepared_drafts;
       update(user);
       return "Saved.";
     }
@@ -380,13 +382,36 @@ function context(caller: Caller): string {
   return lines.filter(Boolean).join("\n\n");
 }
 
+// Which model company runs the agent: "anthropic" (Claude, default) or "xai" (Grok).
+export const PROVIDER = (process.env.AI_PROVIDER ?? "anthropic") as "anthropic" | "xai";
+
 export async function runAgent(text: string, caller: Caller, model = billing.DEFAULT_MODEL): Promise<string> {
   const history = caller.kind === "sms" ? caller.user.history.slice(-HISTORY_TURNS) : [];
-  const messages: BetaMessageParam[] = history.map((t) => ({ role: t.role, content: t.text }));
-  // Transcript must start with a user turn.
-  while (messages[0]?.role === "assistant") messages.shift();
-  messages.push({ role: "user", content: text });
+  const turns = history.map((t) => ({ role: t.role, content: t.text }));
+  while (turns[0]?.role === "assistant") turns.shift(); // a transcript starts with a user turn
 
+  let reply = PROVIDER === "xai" ? await loopOpenAI(text, caller, model, turns) : await loopClaude(text, caller, model, turns);
+  reply ||= "I got a bit lost there. Can you say that another way?";
+  if (caller.kind === "sms") {
+    const u = caller.user;
+    const now = Date.now();
+    u.history = [...u.history, { role: "user" as const, text, at: now }, { role: "assistant" as const, text: reply, at: now }].slice(
+      -HISTORY_TURNS * 2,
+    );
+    update(u);
+  }
+  return reply;
+}
+
+const meter = async (caller: Caller, model: string, usage: Parameters<typeof billing.priceCall>[1]) => {
+  if (caller.kind === "sms") billing.recordModelCall(caller.user, model, usage);
+  else await counter(A2A_SPEND_KEY, Math.ceil(billing.priceCall(model, usage) * 100_000), 86_400_000); // 1/1000 cents
+};
+
+type Turn = { role: "user" | "assistant"; content: string };
+
+async function loopClaude(text: string, caller: Caller, model: string, turns: Turn[]): Promise<string> {
+  const messages: BetaMessageParam[] = [...turns, { role: "user", content: text }];
   let reply = "";
   // Outside agents get a short answer: fewer steps and tokens bound the cost of one call.
   const a2a = caller.kind === "a2a";
@@ -407,8 +432,7 @@ export async function runAgent(text: string, caller: Caller, model = billing.DEF
       messages,
     }));
 
-    if (caller.kind === "sms") billing.recordModelCall(caller.user, res.model, res.usage);
-    else await counter(A2A_SPEND_KEY, Math.ceil(billing.priceCall(res.model, res.usage) * 100_000), 86_400_000); // 1/1000 cents
+    await meter(caller, res.model, res.usage);
 
     if (res.stop_reason === "refusal") {
       reply = "Sorry, I can't help with that one.";
@@ -437,15 +461,70 @@ export async function runAgent(text: string, caller: Caller, model = billing.DEF
     );
     messages.push({ role: "user", content: results });
   }
+  return reply;
+}
 
-  reply ||= "I got a bit lost there. Can you say that another way?";
-  if (caller.kind === "sms") {
-    const u = caller.user;
-    const now = Date.now();
-    u.history = [...u.history, { role: "user" as const, text, at: now }, { role: "assistant" as const, text: reply, at: now }].slice(
-      -HISTORY_TURNS * 2,
-    );
-    update(u);
+// --- Grok (xAI), or any OpenAI-style chat API ---------------------------------------------
+// Same tools, YES step and metering; the loop is OpenAI function calling. Claude's server-side
+// web search has no equivalent here, so it's left out of the tool list and the prompt.
+const XAI_BASE = (process.env.XAI_BASE_URL ?? "https://api.x.ai/v1").replace(/\/$/, "");
+type OAToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
+type OAMessage = { role: "system" | "user" | "assistant" | "tool"; content: string | null; tool_calls?: OAToolCall[]; tool_call_id?: string };
+const SYSTEM_NO_SEARCH = SYSTEM.replace("web_search for anything current; ", "");
+
+async function openaiChat(body: Record<string, unknown>): Promise<any> {
+  if (process.env.AI_MOCK === "1") {
+    await new Promise((r) => setTimeout(r, Number(process.env.AI_MOCK_MS ?? 800)));
+    return { model: body.model, choices: [{ message: { role: "assistant", content: "Got it. (mock reply)" }, finish_reason: "stop" }], usage: { prompt_tokens: 3000, completion_tokens: 120 } };
+  }
+  const retries = Number(process.env.ANTHROPIC_MAX_RETRIES ?? 4);
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${XAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.XAI_API_KEY}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000),
+    });
+    // Ride out rate limits and overloads with backoff, like the Claude client does.
+    if ((res.status === 429 || res.status >= 500) && attempt < retries) {
+      const wait = Number(res.headers.get("retry-after")) * 1000 || Math.min(20_000, 1000 * 2 ** attempt);
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`model error ${res.status}: ${json?.error?.message ?? json?.error ?? "unknown"}`);
+    return json;
+  }
+}
+
+async function loopOpenAI(text: string, caller: Caller, model: string, turns: Turn[]): Promise<string> {
+  const a2a = caller.kind === "a2a";
+  const fnTools = tools(caller)
+    .filter((t): t is BetaToolUnion & { name: string; description?: string; input_schema: unknown } => "input_schema" in t)
+    .map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+  const messages: OAMessage[] = [{ role: "system", content: `${SYSTEM_NO_SEARCH}\n\n${context(caller)}` }, ...turns, { role: "user", content: text }];
+  let reply = "";
+  for (let step = 0; step < (a2a ? 3 : MAX_STEPS); step++) {
+    const res = await aiSlot(() => openaiChat({ model, messages, max_tokens: a2a ? 2000 : 4000, ...(fnTools.length ? { tools: fnTools, tool_choice: "auto" } : {}) }));
+    const u = res.usage ?? {};
+    const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+    // Priced by the model we asked for (MODEL_PRICES_JSON), not an alias the API may echo back.
+    await meter(caller, model, { input_tokens: (u.prompt_tokens ?? 0) - cached, cache_read_input_tokens: cached, output_tokens: u.completion_tokens ?? 0 });
+
+    const msg = res.choices?.[0]?.message ?? {};
+    if (typeof msg.content === "string" && msg.content.trim()) reply = msg.content.trim();
+    const calls: OAToolCall[] = msg.tool_calls ?? [];
+    messages.push({ role: "assistant", content: msg.content ?? null, ...(calls.length ? { tool_calls: calls } : {}) });
+    if (!calls.length) break;
+    for (const tc of calls) {
+      let out: string;
+      try {
+        out = await runTool(tc.function.name, JSON.parse(tc.function.arguments || "{}"), caller);
+      } catch (err) {
+        out = `Error: ${(err as Error).message}`;
+      }
+      messages.push({ role: "tool", tool_call_id: tc.id, content: out });
+    }
   }
   return reply;
 }

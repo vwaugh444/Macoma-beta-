@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import express, { type Request } from "express";
-import { a2aSpentToday, runAgent } from "./agent.js";
+import { a2aSpentToday, PROVIDER, runAgent } from "./agent.js";
 import { agentCard, a2aHandler } from "./a2a.js";
 import { a2aPaywall, walletAddress, NETWORK } from "./x402.js";
 import { createUser, flush, getUser, importLegacyStore, phoneForCode, recordConsent, referralCount, update, withUnit } from "./store.js";
@@ -229,10 +229,25 @@ app.get("/readyz", async (req: Request, res) => {
   }
 });
 
+// Running on Grok: refuse to start half-configured. Without a price per model the cost meter,
+// and with it the margin rule, would be wrong.
+function checkProvider() {
+  if (PROVIDER !== "xai" || WAITLIST) return;
+  const missing = [
+    !process.env.XAI_API_KEY && process.env.AI_MOCK !== "1" && "XAI_API_KEY",
+    !process.env.AGENT_MODEL && "AGENT_MODEL",
+    !process.env.BUDGET_MODEL && "BUDGET_MODEL",
+  ].filter(Boolean);
+  if (missing.length) throw new Error(`AI_PROVIDER=xai needs ${missing.join(", ")} (Grok model ids exactly as xAI lists them).`);
+  for (const m of new Set([billing.DEFAULT_MODEL, billing.BUDGET_MODEL]))
+    if (!billing.hasPrice(m)) throw new Error(`Add ${m} to MODEL_PRICES_JSON (USD per million tokens: in, out, cacheRead, cacheWrite) so the cost meter is right.`);
+}
+
 async function main() {
+  checkProvider();
   await db();
   await importLegacyStore();
-  console.log(`Macoma (${ROLE}${WAITLIST ? ", waitlist mode" : ""}) on ${usingPostgres() ? "Postgres" : "embedded Postgres (dev)"}`);
+  console.log(`Macoma (${ROLE}${WAITLIST ? ", waitlist mode" : ""}, ${PROVIDER === "xai" ? `Grok: ${billing.DEFAULT_MODEL}` : "Claude"}) on ${usingPostgres() ? "Postgres" : "embedded Postgres (dev)"}`);
   if (ROLE !== "worker") {
     const server = app.listen(PORT, () => {
       console.log(`  Web:     ${PUBLIC_URL}`);

@@ -118,6 +118,14 @@ With `LAUNCH_MODE=waitlist` the homepage ends in a waitlist instead of sign-up. 
 
 [docs/LAUNCH_DAY.md](docs/LAUNCH_DAY.md) is the hour-by-hour plan. It covers the API keys to get, every connector's console steps and callback URL, Stripe checkout with Apple Pay in test mode, and a one-click Render deploy from `render.yaml`.
 
+## Grok or Claude, MCP, and background drafts
+
+- **Run on Grok:** set `AI_PROVIDER=xai` with your xAI key, two Grok model ids and their prices. The tools, YES step and cost meter stay the same. Run `npm run evals` on Grok before switching users.
+- **MCP isn't needed** to run Macoma. It's how other assistants could use Macoma's tools later.
+- **Prepared for you:** each morning Macoma drafts overdue-invoice reminders, lead check-ins and appointment confirmations, held for one YES (or "1 3" to send some).
+
+Details: [docs/MODELS_AND_MCP.md](docs/MODELS_AND_MCP.md). Linking your own agents (a Grok bot on your VM) and how AI pays: [docs/AGENTS_AND_PAYMENTS.md](docs/AGENTS_AND_PAYMENTS.md).
+
 ## Running at scale
 
 Macoma is built to run for 500,000 owners on Postgres with separate web and worker processes. Webhooks only queue work, and workers handle each owner's texts one at a time and in order. Reminders come from an index, so nothing scans every account. See [docs/CAPACITY.md](docs/CAPACITY.md) for the design, the load-test results and the sizing.

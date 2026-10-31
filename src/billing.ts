@@ -169,6 +169,8 @@ type ApiUsage = {
   server_tool_use?: { web_search_requests?: number | null } | null;
 };
 
+export const hasPrice = (model: string) => Boolean(MODEL_PRICES[model]);
+
 export function priceCall(model: string, u: ApiUsage): number {
   const p = MODEL_PRICES[model] ?? MODEL_PRICES[DEFAULT_MODEL];
   const perTok = (usd: number) => usd / 1_000_000;

@@ -25,6 +25,7 @@ export type Contact = {
   notes: string;
   lastOutboundAt: number | null; // we texted them on the owner's behalf
   lastInboundAt: number | null; // they texted back
+  nudgedAt?: number | null; // last check-in Macoma prepared for them, so nobody is nagged twice
 };
 
 export type Reminder = {
@@ -53,6 +54,7 @@ export type Invoice = {
   createdAt: number;
   sentAt: number | null;
   paidAt: number | null;
+  nudgedAt?: number | null; // last payment reminder Macoma prepared
   feeCents?: number; // Macoma's application fee on a Stripe invoice
   feeRecorded?: boolean;
 };
@@ -142,6 +144,7 @@ export type User = {
     digestHour: number | null; // local hour for the morning brief; null = off
     lastDigestDay: string | null;
     allowTraining: false; // we don't train models on user data; kept explicit for the record
+    prepare?: boolean; // morning "prepared for you" drafts (default on)
   };
   notes: string[];
   history: Turn[];

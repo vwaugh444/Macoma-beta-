@@ -115,12 +115,14 @@ async function handleOwner(user: User, text: string) {
     return reply(`Want me to see your calendar or send invoices you get paid for by Apple Pay? Connect your accounts here (link works for 30 min): ${connectUrl(user)}`);
   }
 
-  if (user.pending && YES_WORDS.has(word)) {
+  // "1 3" picks items from a prepared bundle.
+  const pick = user.pending?.type === "bundle" && /^\d+([\s,]+\d+)*$/.test(word) ? word.split(/[\s,]+/).map(Number) : undefined;
+  if (user.pending && (YES_WORDS.has(word) || pick)) {
     // A YES only approves the draft if it was the last thing we texted. If a reminder or a
     // customer's message arrived since, show the draft again rather than guess.
     const p = user.pending;
     if (!p.shownAt || (user.lastOwnerTextAt ?? 0) > p.shownAt) return replyWithDraft(`To be sure, you're approving this:\n${biz.exactDraft(user, p)}`);
-    return reply(await biz.confirmPending(user, () => closeAccount(user)));
+    return reply(await biz.confirmPending(user, () => closeAccount(user), pick));
   }
   if (user.pending && NO_WORDS.has(word)) {
     const what = biz.cancelPending(user);

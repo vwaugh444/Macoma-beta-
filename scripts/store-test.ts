@@ -219,6 +219,38 @@ check("scheduled texts stop without a plan, and missed reminders arrive as one c
   assert.ok(u.reminders.find((r) => r.repeat)!.dueAt > Date.now());
 });
 
+check("the morning brief brings prepared drafts, and the owner can send just some", async () => {
+  // A zone where it's daytime now, so quiet hours don't block the sends.
+  const zones = ["America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Tokyo", "Australia/Sydney", "Asia/Kolkata", "Pacific/Honolulu"];
+  const hourIn = (tz: string) => Number(new Date().toLocaleString("en-US", { timeZone: tz, hour: "numeric", hourCycle: "h23" }));
+  const tz = zones.find((z) => hourIn(z) >= 9 && hourIn(z) <= 19) ?? zones[0];
+  await fresh("+15550000008");
+  await store.unitOfWork(async () => {
+    const u = (await store.getUser("+15550000008"))!;
+    Object.assign(u.settings, { timezone: tz, digestHour: hourIn(tz), business: "Rivera Plumbing" });
+    const dana = biz.upsertContact(u, { name: "Dana Johnson", phone: "+15550007001", kind: "customer" });
+    const inv = biz.createInvoice(u, dana.id, [{ description: "Water heater flush", quantity: 1, unitPrice: 450 }], 7);
+    Object.assign(inv, { status: "sent", dueDate: Date.now() - 3 * 86_400_000, payUrl: "https://pay.example/inv" });
+    const tom = biz.upsertContact(u, { name: "Tom Reyes", phone: "+15550007002", kind: "lead" });
+    tom.lastOutboundAt = Date.now() - 5 * 86_400_000;
+    store.update(u);
+  });
+  const before = outbox.length;
+  await store.unitOfWork(async () => sched.tickUser((await store.getUser("+15550000008"))!, async () => {}, (u, b) => sendSms(u.phone, b)));
+  const brief = outbox.slice(before).find((m) => m.to === "+15550000008");
+  assert.match(brief?.body ?? "", /I got these ready for you/);
+  assert.match(brief!.body, /1\. Payment reminder to Dana Johnson/);
+  assert.match(brief!.body, /2\. Check in with Tom Reyes/);
+  assert.ok(!outbox.slice(before).some((m) => m.to === "+15550007001" || m.to === "+15550007002"), "nothing sent before the owner says so");
+  const reply = await store.unitOfWork(async () => biz.confirmPending((await store.getUser("+15550000008"))!, () => {}, [2]));
+  assert.match(reply, /Sent to Tom Reyes/);
+  const sent = outbox.slice(before);
+  assert.ok(sent.some((m) => m.to === "+15550007002" && /checking in/.test(m.body) && /Rivera Plumbing/.test(m.body)));
+  assert.ok(!sent.some((m) => m.to === "+15550007001"), "Dana wasn't picked");
+  const u = await load("+15550000008");
+  assert.ok(u.contacts.find((c) => c.name === "Tom Reyes")!.nudgedAt);
+});
+
 check("shared rate limit counts across calls", async () => {
   const results = [];
   for (let i = 0; i < 4; i++) results.push(await queue.allow("test:key", 3));

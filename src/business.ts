@@ -42,7 +42,7 @@ export function recentActions(user: User, n = 8): string {
 
 // --- confirmation gate ----------------------------------------------------------
 
-type PendingType = "message_contact" | "send_invoice" | "delete_account" | "web_request" | "ask_agent";
+type PendingType = "message_contact" | "send_invoice" | "delete_account" | "web_request" | "ask_agent" | "bundle";
 
 // Actions defined elsewhere (agent.ts) that also wait for YES. Registered to avoid a circular import.
 const actions = new Map<string, (user: User, payload: any) => Promise<string>>();
@@ -50,10 +50,10 @@ export function registerAction(type: PendingType, run: (user: User, payload: any
   actions.set(type, run);
 }
 
-export function propose(user: User, type: PendingType, summary: string, payload: unknown): string {
+export function propose(user: User, type: PendingType, summary: string, payload: unknown, ttlMs = CONFIRM_TTL_MS): string {
   if (user.pending) setActionStatus(user, user.pending.actionId, "cancelled", "replaced by a newer request");
   const action = logAction(user, { type, summary, status: "awaiting_confirmation" });
-  user.pending = { actionId: action.id, type, summary, payload, expiresAt: Date.now() + CONFIRM_TTL_MS };
+  user.pending = { actionId: action.id, type, summary, payload, expiresAt: Date.now() + ttlMs };
   update(user);
   return action.id;
 }
@@ -68,6 +68,7 @@ export function exactDraft(user: User, p: Pending): string {
     const inv = user.invoices.find((i) => i.id === p.payload.invoiceId);
     return inv ? `${invoiceText(user, inv)}\nReply YES to send it or NO to cancel.` : "Reply YES to send or NO to cancel.";
   }
+  if (p.type === "bundle") return bundleText(p.payload.items);
   if (p.type === "web_request") return `${p.payload.method} ${p.payload.url}\nPaid only if it fits your per-call and daily limits. Reply YES to go ahead or NO to cancel.`;
   if (p.type === "ask_agent")
     return `Send to ${p.payload.agent_name ? `your agent ${p.payload.agent_name}` : `the agent at ${p.payload.agent_url}`}, exactly:\n"${p.payload.message}"\nReply YES to send or NO to cancel.`;
@@ -83,7 +84,8 @@ export function cancelPending(user: User): string | null {
 }
 
 // Runs the pending action. Returns the text to send back to the owner.
-export async function confirmPending(user: User, onDeleteAccount: () => Promise<void> | void): Promise<string> {
+// `pick` (1-based) sends only some items of a prepared bundle, e.g. the owner replied "1 3".
+export async function confirmPending(user: User, onDeleteAccount: () => Promise<void> | void, pick?: number[]): Promise<string> {
   const p = user.pending;
   if (!p) return "Nothing is waiting for a yes right now.";
   user.pending = null;
@@ -100,6 +102,9 @@ export async function confirmPending(user: User, onDeleteAccount: () => Promise<
         break;
       case "send_invoice":
         result = await deliverInvoice(user, p.payload.invoiceId);
+        break;
+      case "bundle":
+        result = await deliverBundle(user, p.payload.items, pick);
         break;
       case "delete_account":
         setActionStatus(user, p.actionId, "done");
@@ -184,6 +189,38 @@ async function textBlocked(user: User, c: Contact): Promise<string | null> {
   return billing.canTextCustomer(user);
 }
 
+// How every text to a contact ends, so they know who it's from.
+export const signed = (user: User, text: string) => `${text}\n\n– ${signature(user)} (sent via Macoma)`;
+
+// --- prepared bundles: several drafts, one YES ------------------------------------------------
+
+export type BundleItem = { contactId: string; text: string; label: string; invoiceId?: string };
+
+export function bundleText(items: BundleItem[]): string {
+  const lines = items.map((it, i) => `${i + 1}. ${it.label}\n"${it.text.split("\n\n– ")[0]}"`);
+  return `${lines.join("\n")}\nReply YES to send ${items.length > 1 ? "all" : "it"}${items.length > 1 ? ", the numbers to send some (like 1 3)," : ""} or NO to skip.`;
+}
+
+async function deliverBundle(user: User, items: BundleItem[], pick?: number[]): Promise<string> {
+  const chosen = pick?.length ? items.filter((_, i) => pick.includes(i + 1)) : items;
+  if (!chosen.length) return "None of those numbers matched, so nothing was sent.";
+  const sent: string[] = [], skipped: string[] = [];
+  for (const it of chosen) {
+    const c = user.contacts.find((x) => x.id === it.contactId);
+    try {
+      await deliverToContact(user, it.contactId, it.text);
+      if (c) c.nudgedAt = Date.now();
+      const inv = it.invoiceId && user.invoices.find((i) => i.id === it.invoiceId);
+      if (inv) inv.nudgedAt = Date.now();
+      sent.push(c?.name ?? "contact");
+    } catch (err) {
+      skipped.push(`${c?.name ?? "contact"} (${(err as Error).message.replace(/\.$/, "")})`);
+    }
+  }
+  update(user);
+  return [sent.length && `Sent to ${sent.join(", ")} ✓`, skipped.length && `Skipped: ${skipped.join("; ")}`].filter(Boolean).join("\n");
+}
+
 function signature(user: User) {
   return user.settings.business ?? user.settings.name ?? "your contact";
 }
@@ -192,7 +229,7 @@ export async function draftContactMessage(user: User, contactRef: string, text: 
   const c = findContact(user, contactRef);
   const blocked = await textBlocked(user, c);
   if (blocked) throw new Error(blocked);
-  const body = `${text}\n\n– ${signature(user)} (sent via Macoma)`;
+  const body = signed(user, text);
   propose(user, "message_contact", `Text ${c.name}: "${text}"`, { contactId: c.id, text: body });
   return `Drafted. Show the owner this exact message to ${c.name} and ask them to reply YES to send or NO to cancel:\n${body}`;
 }
