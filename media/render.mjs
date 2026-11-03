@@ -18,7 +18,8 @@ const FPS = Number(opt("--fps") ?? 30);
 const out = path.join(here, "out");
 fs.mkdirSync(out, { recursive: true });
 
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright");
+const pw = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright");
+const { chromium } = pw.chromium ? pw : pw.default; // CommonJS builds export it on default
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? "/opt/pw-browsers/chromium" });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 await page.goto(pathToFileURL(path.join(here, "films", `${name}.html`)).href + "?capture");

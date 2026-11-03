@@ -60,11 +60,32 @@
           if (kind === "day") return `<div class="msg" ${at({ in: b, fx: "msg" })}><div class="meta c">${esc(a)}</div></div>`;
           if (kind === "draft")
             return `<div class="msg it" ${at({ in: b, fx: "msg", sfx: "recv" })}><div><div class="draft"><div class="to">${esc(a.to)}</div>${esc(a.text)}${a.yes !== false ? `<div class="yes">Reply YES to send</div>` : ""}</div></div></div>`;
+          if (kind === "link")
+            return `<div class="msg it" ${at({ in: b, fx: "msg", sfx: "recv" })}><div><div class="lnk" ${a.press ? at({ in: a.press, fx: "press" }) : ""}><div class="art" style="background:${a.art || "linear-gradient(140deg,#7fd6b4,#8f8cf0 55%,#7cc0f7)"}">${a.letter ? esc(a.letter) : `<img src="${MARK}" alt="">`}</div><div class="lt">${esc(a.title)}</div><div class="ls">${esc(a.sub)}</div></div></div></div>`;
           if (kind === "inv")
             return `<div class="msg it" ${at({ in: b, fx: "msg", sfx: "recv" })}><div><div class="inv"><div class="row"><span>${esc(a.num)}</span><span>${esc(a.due)}</span></div><div class="amt">${esc(a.amount)}</div><div class="row"><span>${esc(a.to)}</span><span>${esc(a.what)}</span></div><div class="ap">Pay with Apple Pay</div></div></div></div>`;
           return `<div class="msg ${kind}" ${at({ in: b, fx: "msg", sfx: kind === "me" ? "send" : "recv" })}><div><div class="b">${esc(a)}</div></div></div>`;
         })
         .join("")}</div>`,
+
+    // A link preview bubble (["link", {title, sub, art, press}, t]) is handled in thread().
+    // Apple Pay sheet inside the phone. rows: [[label, value]], total: [label, amount].
+    // Steps: confirm with side button → Face ID → Done, at times c, f, d.
+    paySheet: ({ t, out, rows, total, c, f, d }) =>
+      `<div class="backdrop" ${at({ in: t, out, fx: "fade", d: 0.35 })}></div>
+      <div class="sheet" ${at({ in: t, out, fx: "slide", d: 0.5 })}>
+        <div class="top"><span class="apw">Apple Pay</span><span class="cx">Cancel</span></div>
+        <div class="cardrow"><span class="cardart"></span><span><b>Debit card</b><br><em>•••• 4021</em></span></div>
+        <div class="rows">${rows.map(([k, v]) => `<div class="r"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>
+        <div class="total"><span>${esc(total[0])}</span><b>${esc(total[1])}</b></div>
+        <div class="confirm">
+          <div ${at({ in: t + 0.2, out: f - 0.1, fx: "fade", d: 0.25 })}><span class="sideic"></span>Confirm with Side Button</div>
+          <div ${at({ in: f, out: d - 0.1, fx: "pop", d: 0.3 })}><svg viewBox="0 0 60 60" width="70" height="70" fill="none" stroke="#0a84ff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18V10a6 6 0 0 1 6-6h8M42 4h8a6 6 0 0 1 6 6v8M56 42v8a6 6 0 0 1-6 6h-8M18 56h-8a6 6 0 0 1-6-6v-8"/><path d="M20 22v5M40 22v5M30 22v12h-3M22 41c5 4 11 4 16 0"/></svg></div>
+          <div class="ok" ${at({ in: d, fx: "pop", d: 0.35, sfx: "pay" })}><span class="okc"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Done</div>
+        </div>
+      </div>
+      <div class="sidehint" ${at({ in: c, out: f - 0.1, fx: "fade", d: 0.25 })}><span>Double-Click<br>to Pay</span><i></i></div>
+      <i style="display:none" ${at({ in: f - 0.32, sfx: "tick" })}></i><i style="display:none" ${at({ in: f - 0.16, sfx: "tick" })}></i>`,
 
     // The text field. Segments: [start, sendAt, text]
     inbar: (segments) => `<div class="inbar"><span class="plus">+</span><span class="field" ${at({ typing: segments })}></span></div>`,
@@ -136,6 +157,7 @@
       else if (fx === "pop") s.transform = `scale(${0.88 + 0.12 * easeBack(a)})`;
       else if (fx === "drop") s.transform = `translateY(${(1 - ea) * -80}px) scale(${0.96 + 0.04 * ea})`;
       else if (fx === "press") { const k = clamp((t - tin) / 0.3); s.opacity = 1; s.visibility = "visible"; s.transform = `scale(${1 - 0.07 * Math.sin(Math.PI * k)})`; }
+      else if (fx === "slide") { s.opacity = 1; s.visibility = t < tin || eb >= 1 ? "hidden" : "visible"; s.transform = `translateY(${(1 - ea) * 720 + eb * 720}px)`; }
       else if (fx === "word") { s.transform = `translateY(${(1 - ea) * 0.35}em)`; s.filter = `blur(${(1 - ea) * 14 + eb * 10}px)`; }
     }
     for (const { el, keys } of kfs) {

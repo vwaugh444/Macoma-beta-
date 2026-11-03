@@ -1,12 +1,13 @@
 # Macoma films
 
-Three short commercial-style films, one per use case, written as HTML and rendered frame by frame:
+Four short commercial-style films (one per use case, plus the Apple Pay experience), written as HTML and rendered frame by frame:
 
 | Film | File | Story |
 |---|---|---|
 | Home & life | `films/home.html` | A parent's day: morning brief, a plan that moves, a reminder on repeat |
 | The trades | `films/trade.html` | A plumber in the truck: running late, invoice from the driveway, paid with Apple Pay |
 | Your business | `films/business.html` | A salon owner: the brief, getting paid, a lead that books, the day on record |
+| Apple Pay | `films/applepay.html` | Your agent asks, you approve: sign up by text, Face ID, a one-time top-up rule, weeks later inside that rule, and a new purchase that needs a new tap |
 
 Open a film in a browser to preview it (it loops). To render:
 
@@ -19,4 +20,4 @@ It needs Playwright with Chromium (`PLAYWRIGHT_MODULE` can point at an install) 
 
 Everything on screen is defined in `films/film.js` (phone, Messages thread, notifications, connections hub, end card) and `films/film.css` (the liquid-glass look). Edit a film's script to change its words or timing.
 
-The website uses 720p copies in `public/media/` (`home.mp4`, `trade.mp4`, `business.mp4`) with poster images.
+The website uses 720p copies in `public/media/` (`home.mp4`, `trade.mp4`, `business.mp4`, `applepay.mp4`) with poster images.
