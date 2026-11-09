@@ -164,21 +164,47 @@ You don't need LangChain or LangGraph. The agent loop is Macoma's own, and the j
 
 **Apple Pay always needs the person's Face ID or Touch ID.** AI can prepare a payment but never approve one. One-time agent credentials (Stripe's Shared Payment Tokens and Issuing for agents) plug into the marked spot in `confirmPending` once Stripe grants access. See [docs/AGENTS_AND_PAYMENTS.md](docs/AGENTS_AND_PAYMENTS.md).
 
+### How an agent "calls" someone's Apple Pay
+
+No API lets a server or an agent charge someone's Apple Wallet directly. The agent asks, and the person approves on their own phone:
+
+```
+agent decides a payment is needed ─▶ server creates it (Stripe Checkout or Payment Element)
+  ─▶ the Apple Pay sheet appears on the person's iPhone (texted link, Apple Messages, or an iOS app)
+  ─▶ Face ID ─▶ a payment token only that seller can use ─▶ Stripe charges it
+  ─▶ if it was a saved approval, the server can charge again later, but only as approved
+```
+
+| Saved approval (one Face ID) | Example | What the agent can do later, with no tap |
+|---|---|---|
+| Recurring | Macoma Business, $59 a month | Charge $59 each month until cancelled |
+| Automatic reload | $20 of agent credit when the balance drops under $5 | Top up $20 whenever it's under $5 |
+| Deferred | Book the job, charge the $200 balance on Nov 15 | Charge once, on that date |
+
+Apple's rules (full research in [reports/Apple Pay third party payment rules.md](reports/Apple%20Pay%20third%20party%20payment%20rules.md)):
+- **The business on the sheet is the business being paid.** Owners' invoices are direct charges on the owner's Stripe account. Macoma never charges in its own name and pays someone else afterwards ("substitute merchant of record").
+- **One kind of saved approval per Face ID.** A subscription and auto-reload are two separate approvals, each with a page to change or cancel.
+- **Anything outside the approval needs a new sheet:** a higher price, a different amount, or a purchase from another business.
+- **No screens between tapping Apple Pay and the sheet**, and data from Apple Pay (name, email, address) never goes into the agent's memory or marketing.
+- **Selling crypto with Apple Pay needs Apple's approval.** To fund an agent's USDC wallet, use a licensed onramp such as Coinbase Onramp, where Coinbase is the seller.
+
+The film [`media/films/applepay.html`](media/films/applepay.html) shows the whole experience: sign-up by text, Face ID, a one-time top-up rule, the agent working inside it weeks later, and a new purchase that needs a new tap.
+
 ## Messaging channels
 
 | Conversation | Channel | Apple Pay |
 |---|---|---|
-| Owner ↔ Macoma on iPhone | **Apple Messages for Business** (planned): blue bubble, verified logo | **In the chat**, with Face ID. For plans and reply packs. |
+| Owner ↔ Macoma on iPhone | **Apple Messages for Business** (planned): blue bubble, verified logo | **In the chat**, with Face ID, for reply packs. Plans use Stripe Checkout until recurring payments are confirmed in Messages. |
 | Owner ↔ Macoma elsewhere | SMS today, RCS next | A link to Stripe's page |
 | Macoma → owners' customers | SMS today, RCS next | A link to the invoice page |
 
-Apple's channel requires the customer to start the conversation, registration with Apple, an Apple-approved messaging provider, and an Apple Pay merchant ID. Plan and sources: [docs/MESSAGING_AND_APPLE_PAY.md](docs/MESSAGING_AND_APPLE_PAY.md). Apple also requires a live person to be reachable (no bot-only service), and owners' invoices must keep the owner as merchant of record: see [reports/Apple Pay third party payment rules.md](reports/Apple%20Pay%20third%20party%20payment%20rules.md).
+Apple's channel requires the customer to start the conversation, a live person reachable during business hours (no bot-only service), registration with Apple, an Apple-approved messaging provider, and an Apple Pay merchant ID. Plan and sources: [docs/MESSAGING_AND_APPLE_PAY.md](docs/MESSAGING_AND_APPLE_PAY.md).
 
 ## The website, workspace and dashboard
 
 - **Homepage** (`public/index.html`), in a liquid-glass look:
   - the scroll story;
-  - **Use cases**, with three short films: home, trades, business;
+  - **Use cases**, with short films: home, trades, business;
   - **How you use it**;
   - **Connections & linkups**, with each connector's status;
   - pricing;
@@ -192,7 +218,7 @@ Apple's channel requires the customer to start the conversation, registration wi
   - Preferences, including prepared drafts and pre-approved texts;
   - Invite.
 - **Dashboard** (`/admin`, with `OPS_TOKEN`): waitlist interest and the CSV export.
-- **Films** (`media/`): three commercial-style films rendered from HTML with `node media/render.mjs <home|trade|business>`. 720p copies are in `public/media/`.
+- **Films** (`media/`): four commercial-style films rendered from HTML with `node media/render.mjs <home|trade|business|applepay>`: home life, the trades, a business day, and the Apple Pay experience. 720p copies are in `public/media/`.
 
 ## Scale
 
@@ -258,7 +284,8 @@ docs/               plans and guides (below)
 | [CAPACITY.md](docs/CAPACITY.md) | Design for scale, load-test results, sizing |
 | [MODELS_AND_MCP.md](docs/MODELS_AND_MCP.md) | Claude or Grok, the MCP server, background work and pre-approval |
 | [AGENTS_AND_PAYMENTS.md](docs/AGENTS_AND_PAYMENTS.md) | Linked agents, the VM bridge, how AI gets paid and pays |
-| [MESSAGING_AND_APPLE_PAY.md](docs/MESSAGING_AND_APPLE_PAY.md) | Apple Messages for Business, SMS, RCS, and where Apple Pay works |
+| [MESSAGING_AND_APPLE_PAY.md](docs/MESSAGING_AND_APPLE_PAY.md) | Apple Messages for Business, SMS, RCS, where Apple Pay works, and Apple's live-agent rule |
+| [Apple Pay third party payment rules](reports/Apple%20Pay%20third%20party%20payment%20rules.md) | What Apple allows, bans and must approve when a platform or agent charges with Apple Pay, plus a launch checklist |
 | [bridge/README.md](bridge/README.md) | Run your own agent on a VM |
 | [media/README.md](media/README.md) | The films and how to re-render them |
 | [moat.md](docs/moat.md) · [requirements.md](docs/requirements.md) | Strategy, and requirements based on Instinct's terms |
@@ -271,6 +298,8 @@ docs/               plans and guides (below)
 | Real US texting | Twilio toll-free or 10DLC approval (start now) |
 | Apple Messages for Business, with Apple Pay in the chat | Apple Business Register approval and your choice of messaging provider; then the channel adapter gets built |
 | AI paying with one-time credentials | Stripe access to Shared Payment Tokens and Issuing for agents |
+| Agent credit with Apple Pay auto-reload (subscription + top-up rule) | Ready to build. First, written answers from Stripe on saved Apple Pay approvals under Connect and the business name shown on invoice pages |
+| Funding agent wallets (USDC) with Apple Pay | Coinbase Onramp API access |
 | Gmail, QuickBooks and Square tools | Google's security review and Intuit's production review; then the tools get built |
 | RCS for customer texts | Carrier and brand approval |
 | Legal pages | A lawyer's review of `/terms`, `/privacy`, `/sms-terms` |
