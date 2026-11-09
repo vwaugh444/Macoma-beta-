@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Macoma · Apple Pay</title>
+<link rel="stylesheet" href="film.css">
+</head>
+<body data-key="D">
+<div class="stage" id="stage"></div>
+<script src="../../public/faces.js"></script>
+<script src="film.js"></script>
+<script>
+// APPLE PAY: the whole experience of an agent that can ask for money but never takes it.
+// Sign up by text → approve with Face ID → approve a top-up rule once → weeks later the agent
+// works inside that rule → a new purchase needs a new tap.
+const D = 58.5;
+const P = { x: 1160, y: 110, s: 1.12 };
+const WALL = "linear-gradient(160deg,#8fb8ff,#a99cf5 55%,#ffc2a8)";
+
+const thread = F.thread([
+  ["day", "Today 9:12 AM", 0],
+  ["it", "Hi Marcus 👋 I'm Macoma. Want me running invoices, follow-ups and reminders for Reyes Plumbing?", 0],
+  ["me", "yes, set me up", 7.0],
+  ["typing", 7.3, 8.0],
+  ["it", "Your agent is ready. Business plan: $59/month, first 14 days free. Tap to start 👇", 8.0],
+  ["link", { title: "Start Macoma Business", sub: "macoma.app · Apple Pay", press: 9.7 }, 8.5],
+  ["it", "You're all set ✓ 14 days free. I'll text you before your first charge.", 18.8],
+  ["typing", 19.5, 20.2],
+  ["it", "One more thing: I use credit for texts and lookups. Want me to top myself up, $20 when it drops under $5? You approve it once.", 20.2],
+  ["me", "YES", 22.2],
+  ["it", "Done ✓ Top-ups: $20 when under $5. Text BILLING to change or stop it.", 27.4],
+  ["day", "Wednesday 7:05 AM", 37.3],
+  ["it", "Your ½\" copper fittings are running low. 2 boxes from Northside Supply: $64.18. That's a new purchase, so it needs your tap:", 37.7],
+  ["link", { title: "Checkout · Northside Supply", sub: "$64.18 · Apple Pay", art: "linear-gradient(140deg,#f97316,#c2410c)", letter: "N", press: 39.4 }, 38.4],
+  ["it", "Paid ✓ Arrives Thursday. Receipt saved to your LOG.", 46.2],
+]);
+
+const macomaPage =
+  `<div class="page" style="z-index:12" ${F.at({ in: 10.0, out: 18.3, fx: "fade", d: 0.4 })}>
+    <div class="biz"><img src="${F.MARK}" alt="">Macoma</div>
+    <div class="card">
+      <div class="mut">Business plan</div>
+      <div class="big">$59<small> / month</small></div>
+      <div class="mut">14 days free, then $59.00 a month. Cancel anytime at macoma.app/billing.</div>
+      <div class="applepay" ${F.at({ in: 11.3, fx: "press" })}>Subscribe with Apple Pay</div>
+    </div>
+    <div class="card" ${F.at({ in: 16.5, fx: "up" })}><div class="done"><div class="tick"><svg viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><b>You're in.</b><span class="mut">Your agent is on. Back to Messages.</span></div></div>
+  </div>`;
+
+const supplierPage =
+  `<div class="page" style="z-index:12" ${F.at({ in: 39.8, out: 45.8, fx: "fade", d: 0.4 })}>
+    <div class="biz"><span class="lg">N</span>Northside Supply</div>
+    <div class="card">
+      <div class="mut">Your cart, prepared by Macoma</div>
+      <div class="row2"><span>2 × ½" copper fittings (box)</span><span>$58.00</span></div>
+      <div class="row2"><span>Delivery Thursday</span><span>$6.18</span></div>
+      <div class="big">$64.18</div>
+      <div class="applepay" ${F.at({ in: 40.5, fx: "press" })}>Buy with Apple Pay</div>
+    </div>
+    <div class="card" ${F.at({ in: 44.9, fx: "up" })}><div class="done"><div class="tick"><svg viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><b>Order placed</b><span class="mut">Northside Supply · $64.18</span></div></div>
+  </div>`;
+
+document.getElementById("stage").innerHTML = [
+  F.fields(["#a8d8ff", "#c9b8ff", "#ffd2b8", "#b8f0dc", "#d6e4ff"], D),
+  F.kin("Your agent can ask.", { t: 0.3, out: 3.3, y: 340 }),
+  F.kin("~Only ~you ~can ~pay.", { t: 1.2, out: 3.3, y: 480 }),
+
+  F.phone({
+    kf: [[3.1, { x: 755, y: 1300, s: 1.12 }], [4.1, { x: 755, y: 110, s: 1.12 }], [4.5, { x: 755, y: 110, s: 1.12 }], [5.2, { ...P, ry: -10 }],
+         [48.0, { ...P, ry: -10 }], [48.8, { ...P, y: 1300, ry: -10 }]],
+    content:
+      F.header("Macoma", "biz") + thread +
+      F.inbar([[5.6, 6.95, "yes, set me up"], [21.5, 22.15, "YES"]]) +
+      macomaPage +
+      F.paySheet({ t: 11.8, out: 16.2, c: 12.3, f: 13.7, d: 14.6,
+        rows: [["Subscription", "Macoma Business · $59.00 monthly"], ["Starts", "Nov 17, after the free trial"], ["Manage", "macoma.app/billing"]],
+        total: ["Pay Macoma", "$0.00 today"] }) +
+      F.paySheet({ t: 22.7, out: 26.9, c: 23.2, f: 24.4, d: 25.3,
+        rows: [["Auto reload", "$20.00 when your balance is under $5.00"], ["Manage", "macoma.app/billing"]],
+        total: ["Pay Macoma", "$20.00 today"] }) +
+      F.lock({ date: "Tuesday, December 8", clock: "10:42", t: 28.9, out: 37.0, wall: WALL }) +
+      F.notif({ title: "Macoma", msg: "Credit low, so I topped up $20.00 with Apple Pay, as you approved. Balance $24.80.", t: 29.7, out: 36.8, y: 300 }) +
+      F.notif({ title: "Macoma", msg: "💸 Dana J. paid INV-0042 · $450.00", t: 31.0, out: 36.8, y: 404 }) +
+      F.notif({ title: "Macoma", msg: "📅 Tomorrow's 3 jobs are confirmed with customers", t: 32.3, out: 36.8, y: 486 }) +
+      supplierPage +
+      F.paySheet({ t: 40.9, out: 44.7, c: 41.3, f: 42.4, d: 43.3,
+        rows: [["Order", "2 × ½\" copper fittings"], ["Delivery", "Thursday · $6.18"]],
+        total: ["Pay Northside Supply", "$64.18"] }),
+  }),
+
+  F.cap({ tag: "Start", h: "Sign up<br>in a text.", p: "Your agent sends the link. No app, no forms.", x: 230, y: 330, t: 5.0, out: 10.8 }),
+  F.cap({ tag: "Approve", h: "Face ID is<br>the signature.", p: "Apple Pay shows exactly who's charging, how much and how often. You decide.", x: 230, y: 330, t: 11.2, out: 18.4 }),
+  F.cap({ tag: "Set the rule once", h: "One approval.<br>One clear limit.", p: "Top-ups run only at the amount and threshold you approved. Nothing else.", x: 230, y: 330, t: 18.8, out: 28.4 }),
+  F.cap({ tag: "Weeks later", h: "It handles<br>the small stuff.", p: "Inside your rules, your agent keeps itself running and tells you every time.", x: 230, y: 330, t: 29.0, out: 36.8 }),
+  F.cap({ tag: "Anything new", h: "New charge?<br>New tap.", p: "Your agent finds it and fills the cart. Only your Face ID pays.", x: 230, y: 330, t: 37.4, out: 47.8 }),
+
+  F.kin("Your agent prepares.", { t: 49.0, out: 53.0, y: 340 }),
+  F.kin("~You ~approve.", { t: 49.8, out: 53.0, y: 480 }),
+  F.end({ t: 53.2, tagline: "Your agent. Your Face ID." }),
+].join("");
+FilmStart(D);
+</script>
+</body>
+</html>

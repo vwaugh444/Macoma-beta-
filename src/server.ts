@@ -1,93 +1,164 @@
 import "dotenv/config";
 import crypto from "node:crypto";
-import express from "express";
-import { runAgent } from "./agent.js";
+import fs from "node:fs";
+import path from "node:path";
+import express, { type Request } from "express";
+import { a2aSpentToday, PROVIDER, runAgent } from "./agent.js";
 import { agentCard, a2aHandler } from "./a2a.js";
 import { a2aPaywall, walletAddress, NETWORK } from "./x402.js";
-import {
-  createUser,
-  deleteUser,
-  getUser,
-  isDoNotText,
-  ownerForContactPhone,
-  phoneForCode,
-  recordConsent,
-  referralCount,
-  setDoNotText,
-  update,
-  type User,
-} from "./store.js";
+import { createUser, flush, getUser, importLegacyStore, phoneForCode, recordConsent, referralCount, update, withUnit } from "./store.js";
+import { db, usingPostgres } from "./db.js";
 import { normalizePhone, sendSms, smsEnabled, verifyTwilio } from "./sms.js";
 import * as biz from "./business.js";
+import * as billing from "./billing.js";
+import { connectorRoutes, connectToken, startSession, whoIs } from "./connectors.js";
+import { workspaceRoutes } from "./workspace.js";
+import { waitlistRoutes } from "./waitlist.js";
+import { mcpRoutes } from "./mcp.js";
+import { stripeEnabled, type Stripe } from "./stripeClient.js";
 import { startScheduler } from "./scheduler.js";
+import { allow, enqueue, queueStats, startWorkers, stopWorkers } from "./queue.js";
+import { jobHandlers, sendWelcome, TERMS_VERSION } from "./inbound.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://localhost:${PORT}`).replace(/\/$/, "");
 const INVITE_ONLY = process.env.INVITE_ONLY === "true";
 const AGENT_NUMBER = process.env.TWILIO_PHONE_NUMBER ?? "";
-const TERMS_VERSION = "2026-10-21";
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL ?? "support@example.com";
-
-const STOP_WORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT", "REVOKE"]);
-const START_WORDS = new Set(["START", "UNSTOP"]);
-const HELP_WORDS = new Set(["HELP", "INFO"]);
-const YES_WORDS = new Set(["YES", "Y", "SEND", "CONFIRM", "OK", "AGREE"]);
-const NO_WORDS = new Set(["NO", "N", "DONT", "DON'T", "NEVERMIND"]);
-
-const HELP_TEXT = `Macoma: an AI assistant you text. Text anything to get started. Reply LOG to see recent actions, DELETE MY DATA to erase your account, STOP to opt out. Help: ${SUPPORT_EMAIL}. Msg & data rates may apply.`;
-const WELCOME_TEXT =
-  "Hey, it's Macoma, your assistant. Text me like you'd text a sharp office manager: reminders, reorders, invoices, follow-ups, \"tell my 2pm I'm running late\". What should I call you, and what's your business (if you have one)?";
-const TERMS_PROMPT = `Hi, I'm Macoma, an AI assistant you text. To start, reply YES to confirm you're 18+ and agree to the Terms (${PUBLIC_URL}/terms) and SMS terms (${PUBLIC_URL}/sms-terms). Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out.`;
+// "waitlist" before launch (collect interest, no sign-ups or texts), "live" after.
+const WAITLIST = process.env.LAUNCH_MODE === "waitlist";
+const OTP_COUNTRIES = (process.env.OTP_COUNTRY_CODES ?? "1").split(",").map((c) => c.trim()).filter(Boolean);
+const OTP_GLOBAL_HOURLY = Number(process.env.OTP_GLOBAL_HOURLY ?? 500);
+// web: pages, sign-in and webhooks. worker: runs queued jobs and the scheduler. all: both (dev, small installs).
+const ROLE = (process.env.ROLE ?? "all") as "web" | "worker" | "all";
 
 const app = express();
-app.set("trust proxy", true);
+// How many proxies sit in front of the app (load balancer = 1). Trusting more lets callers
+// spoof X-Forwarded-For and dodge the per-IP limits.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
-// Stripe needs the raw body for signature checks, so it goes before express.json().
+// Stripe needs the raw body for signature checks, so these go before express.json().
+// Webhooks only verify and queue; workers do the work, so these answer in milliseconds.
+// The event id is the dedupe key, so Stripe's retries never double-count.
+const lane = (event: Stripe.Event, fallback: string) => {
+  const obj = event.data.object as { metadata?: Record<string, string> | null; customer?: unknown };
+  return obj.metadata?.phone ?? obj.metadata?.owner ?? (typeof obj.customer === "string" ? `stripe:${obj.customer}` : fallback);
+};
+
+// Macoma's own billing: subscriptions, trials, reply packs.
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  const event = biz.verifyStripe(req.body, req.header("stripe-signature"));
+  const event = biz.verifyStripe(req.body, req.header("stripe-signature"), process.env.STRIPE_WEBHOOK_SECRET);
   if (!event) return res.status(400).send("bad signature");
+  await enqueue(lane(event, `stripe:${event.id}`), "stripe_billing", event, { dedupe: `stripe:${event.id}` });
   res.json({ received: true });
-  await biz.handleStripeEvent(event, getUser).catch((err) => console.error("stripe event", err));
+});
+
+// Owners' connected Stripe accounts: invoice paid → tell the owner, count the platform fee.
+app.post("/stripe/connect-webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const event = biz.verifyStripe(req.body, req.header("stripe-signature"), process.env.STRIPE_CONNECT_WEBHOOK_SECRET);
+  if (!event) return res.status(400).send("bad signature");
+  await enqueue(lane(event, `stripe:${event.account ?? event.id}`), "stripe_connect", event, { dedupe: `stripe-connect:${event.id}` });
+  res.json({ received: true });
+});
+
+// Inbound texts (Twilio webhook). Verify, queue, ack. Twilio's MessageSid is the dedupe key.
+app.post("/sms", express.urlencoded({ extended: false }), async (req, res) => {
+  if (!verifyTwilio(req.header("X-Twilio-Signature"), `${PUBLIC_URL}/sms`, req.body)) {
+    return res.status(403).send("bad signature");
+  }
+  const phone = normalizePhone(String(req.body.From ?? ""));
+  const text = String(req.body.Body ?? "").trim();
+  if (phone && text) {
+    const sid = typeof req.body.MessageSid === "string" ? req.body.MessageSid : null;
+    await enqueue(phone, "sms", { text }, { dedupe: sid ? `sms:${sid}` : undefined });
+  }
+  res.type("text/xml").send("<Response/>");
 });
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Before launch (LAUNCH_MODE=waitlist) the same homepage tells the story but ends in a waitlist
+// instead of sign-up. The mode is set on <html> so the right copy shows with no flash.
+if (WAITLIST) {
+  const page = fs.readFileSync(path.join("public", "index.html"), "utf8").replace("<html lang=\"en\">", '<html lang="en" data-mode="waitlist">');
+  app.get(["/", "/index.html"], (_req, res) => res.type("html").send(page));
+  app.get(["/signin", "/signin.html"], (_req, res) => res.redirect("/#start"));
+  app.post(["/api/join", "/api/verify"], (_req, res) => res.status(403).json({ error: "Macoma isn't open yet. Join the waitlist and we'll let you know.", waitlist: true }));
+}
 app.use(express.static("public", { extensions: ["html"] }));
 
-// --- Join (web): number → one-time code → active ------------------------------
+// Each request is one unit of work: accounts it changes are saved before the response goes out.
+app.use((_req, res, next) => {
+  withUnit(() => {
+    const end = res.end.bind(res) as (...a: unknown[]) => typeof res;
+    res.end = ((...args: unknown[]) => {
+      flush()
+        .catch((err) => console.error("save failed", err))
+        .finally(() => end(...args));
+      return res;
+    }) as typeof res.end;
+    next();
+  });
+});
 
-const hits = new Map<string, number[]>();
-function allow(key: string, max: number, windowMs = 60 * 60 * 1000) {
-  const now = Date.now();
-  const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
-  recent.push(now);
-  hits.set(key, recent);
-  return recent.length <= max;
-}
+app.use(waitlistRoutes());
+app.use(mcpRoutes());
+app.use(connectorRoutes(sendWelcome));
+app.use(workspaceRoutes());
+
+// Plan checkout from the connect window. Stripe Checkout shows Apple Pay on Apple devices.
+app.post("/api/billing/checkout", async (req, res) => {
+  const user = await whoIs(req);
+  if (!user) return res.status(401).json({ error: "Please sign in again, or text CONNECT for a new link." });
+  const plan = String(req.body?.plan ?? "") as keyof typeof billing.PLANS;
+  if (!billing.PLANS[plan]) return res.status(400).json({ error: "Pick a plan." });
+  try {
+    const back = typeof req.body?.t === "string" ? `/connect.html?t=${encodeURIComponent(req.body.t)}&paid=1` : "/workspace?paid=1";
+    res.json(await billing.switchPlan(user, plan, back));
+  } catch (err) {
+    console.error("checkout", err);
+    res.status(502).json({ error: "Checkout is unavailable right now. Try again in a minute." });
+  }
+});
+
+app.get("/api/billing/plans", (_req, res) => {
+  res.json({
+    trial: { days: billing.TRIAL.days, replies: billing.TRIAL.replies },
+    plans: Object.values(billing.PLANS).map(({ id, name, priceUsd, replies, customerTexts, seats, invoiceFeePct }) => ({ id, name, priceUsd, replies, customerTexts, seats, invoiceFeePct })),
+    pack: billing.PACK,
+  });
+});
+
+// --- Join (web): number → one-time code → active ------------------------------
 
 const hashOtp = (phone: string, code: string) => crypto.createHash("sha256").update(`${phone}:${code}`).digest("hex");
 
 app.get("/api/config", (_req, res) => {
-  res.json({ inviteOnly: INVITE_ONLY, agentNumber: AGENT_NUMBER, termsVersion: TERMS_VERSION });
+  res.json({ inviteOnly: INVITE_ONLY, agentNumber: AGENT_NUMBER, termsVersion: TERMS_VERSION, mode: WAITLIST ? "waitlist" : "live" });
 });
 
 app.post("/api/join", async (req, res) => {
   const phone = normalizePhone(String(req.body?.phone ?? ""));
   if (!phone) return res.status(400).json({ error: "That doesn't look like a phone number." });
-  // Limits per IP and per number so the form can't be used to spam strangers.
-  if (!allow(`ip:${req.ip}`, 10) || !allow(`otp:${phone}`, 3)) return res.status(429).json({ error: "Too many tries. Try again later." });
+  // Limits per IP and per number so the form can't be used to spam strangers. Shared by every server.
+  // Sign-in codes go only to countries we serve: premium-rate destinations are how SMS-pumping fraud makes money.
+  if (!OTP_COUNTRIES.some((cc) => phone.startsWith(`+${cc}`))) return res.status(400).json({ error: "Macoma isn't available for numbers in that country yet." });
+  if (!(await allow(`ip:${req.ip}`, 10)) || !(await allow(`otp:${phone}`, 3))) return res.status(429).json({ error: "Too many tries. Try again later." });
+  // A ceiling for the whole service, so a botnet with many IPs can't run up the SMS bill.
+  if (!(await allow("otp:all", OTP_GLOBAL_HOURLY))) return res.status(503).json({ error: "We're getting a lot of sign-ups right now. Try again in a few minutes." });
   if (req.body?.ageConfirmed !== true || req.body?.agreed !== true)
     return res.status(400).json({ error: "Please confirm you're 18+ and agree to the terms." });
 
-  const ref = typeof req.body?.ref === "string" && phoneForCode(req.body.ref) ? req.body.ref : null;
-  const existing = getUser(phone);
+  const ref = typeof req.body?.ref === "string" && (await phoneForCode(req.body.ref)) ? req.body.ref : null;
+  const existing = await getUser(phone);
   if (existing?.status === "suspended") return res.status(403).json({ error: "This number can't use Macoma." });
   if (!existing && INVITE_ONLY && !ref) return res.status(403).json({ error: "Macoma is invite-only right now. Ask a friend for their link." });
 
-  const user = existing ?? createUser(phone, ref);
+  const user = existing ?? (await createUser(phone, ref));
   const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
   user.otp = { hash: hashOtp(phone, code), expiresAt: Date.now() + 10 * 60 * 1000, tries: 0 };
   update(user);
+  await flush(); // the code must be saved before it can arrive
   // A one-time code may be sent even to an opted-out number, since they asked for it.
   await sendSms(phone, `Your Macoma code is ${code}. It expires in 10 minutes. Didn't ask for this? Ignore it.`).catch((err) =>
     console.error("otp sms failed", err),
@@ -97,7 +168,7 @@ app.post("/api/join", async (req, res) => {
 
 app.post("/api/verify", async (req, res) => {
   const phone = normalizePhone(String(req.body?.phone ?? ""));
-  const user = phone ? getUser(phone) : undefined;
+  const user = phone ? await getUser(phone) : undefined;
   const code = String(req.body?.code ?? "").trim();
   if (!user?.otp || Date.now() > user.otp.expiresAt) return res.status(400).json({ error: "Code expired. Request a new one." });
   if (++user.otp.tries > 5) {
@@ -111,126 +182,96 @@ app.post("/api/verify", async (req, res) => {
   }
   user.otp = null;
   const isNew = user.status === "pending";
-  if (isNew || !user.consent) recordConsent(user, { at: Date.now(), ip: req.ip ?? null, via: "web", termsVersion: TERMS_VERSION, ageConfirmed: true });
+  if (isNew || !user.consent) await recordConsent(user, { at: Date.now(), ip: req.ip ?? null, via: "web", termsVersion: TERMS_VERSION, ageConfirmed: true });
   user.status = "active";
   user.optedOut = false;
+  user.verifiedAt ??= Date.now();
   update(user);
-  if (isNew) await sendSms(user.phone, WELCOME_TEXT).catch((err) => console.error("welcome sms failed", err));
-  res.json({ shareUrl: `${PUBLIC_URL}/?ref=${user.code}`, referrals: referralCount(user.code), agentNumber: AGENT_NUMBER, isNew });
-});
-
-// --- Inbound SMS (Twilio webhook) ---------------------------------------------
-
-// One message at a time per phone so history and confirmations stay in order.
-const queues = new Map<string, Promise<void>>();
-function enqueue(phone: string, job: () => Promise<void>) {
-  const next = (queues.get(phone) ?? Promise.resolve()).then(job, job);
-  queues.set(phone, next.catch(() => {}));
-}
-
-async function handleOwner(user: User, text: string) {
-  const word = text.toUpperCase().replace(/[.!]+$/, "");
-  const reply = (body: string) => sendSms(user.phone, body);
-
-  if (STOP_WORDS.has(word)) {
-    user.optedOut = true;
-    update(user);
-    return reply("You're unsubscribed from Macoma and won't get more texts. Reply START to come back.");
-  }
-  if (START_WORDS.has(word) || (user.optedOut && word === "YES")) {
-    user.optedOut = false;
-    update(user);
-    return reply("Welcome back. Text me anything.");
-  }
-  if (user.optedOut || user.status === "suspended") return;
-  if (HELP_WORDS.has(word)) return reply(HELP_TEXT);
-
-  if (user.status === "pending") {
-    if (!YES_WORDS.has(word)) return reply(TERMS_PROMPT);
-    recordConsent(user, { at: Date.now(), ip: null, via: "sms", termsVersion: TERMS_VERSION, ageConfirmed: true });
-    user.status = "active";
-    update(user);
-    return reply(WELCOME_TEXT);
-  }
-
-  if (user.pending && YES_WORDS.has(word)) return reply(await biz.confirmPending(user, () => deleteUser(user.phone)));
-  if (user.pending && NO_WORDS.has(word)) {
-    const what = biz.cancelPending(user);
-    return reply(what ? `Cancelled: ${what}` : "Nothing to cancel.");
-  }
-  if (word === "LOG" || word === "ACTIONS") return reply(biz.recentActions(user));
-  if (word === "DELETE MY DATA" || word === "DELETE ACCOUNT") {
-    biz.propose(user, "delete_account", "Delete account and all data", {});
-    return reply("This permanently deletes your contacts, reminders, invoices and history. Reply YES to confirm or NO to keep everything.");
-  }
-
-  return reply(await runAgent(text, { kind: "sms", user }));
-}
-
-// A customer or lead texting back after we messaged them on an owner's behalf.
-async function handleContactReply(phone: string, text: string): Promise<boolean> {
-  const word = text.toUpperCase().replace(/[.!]+$/, "");
-  const match = ownerForContactPhone(phone);
-  if (STOP_WORDS.has(word)) {
-    setDoNotText(phone, true);
-    await sendSms(phone, "You won't get more texts from this number. Reply START to undo.");
-    if (match && !match.owner.optedOut) await sendSms(match.owner.phone, `${match.contact.name} opted out of texts. I won't message them again.`);
-    return true;
-  }
-  if (START_WORDS.has(word) && isDoNotText(phone)) {
-    setDoNotText(phone, false);
-    await sendSms(phone, "You're resubscribed.");
-    return true;
-  }
-  if (!match) return false;
-  const { owner, contact } = match;
-  contact.lastInboundAt = Date.now();
-  biz.logAction(owner, { type: "contact_reply", summary: `${contact.name} replied: ${text.slice(0, 120)}`, status: "done" });
-  if (!owner.optedOut) await sendSms(owner.phone, `💬 ${contact.name} (${contact.kind}) replied:\n"${text}"\nWant me to answer?`);
-  return true;
-}
-
-app.post("/sms", (req, res) => {
-  if (!verifyTwilio(req.header("X-Twilio-Signature"), `${PUBLIC_URL}/sms`, req.body)) {
-    return res.status(403).send("bad signature");
-  }
-  const phone = normalizePhone(String(req.body.From ?? ""));
-  const text = String(req.body.Body ?? "").trim();
-  // Ack right away: Twilio times out after 15s and the agent may take longer.
-  res.type("text/xml").send("<Response/>");
-  if (!phone || !text) return;
-
-  enqueue(phone, async () => {
-    try {
-      const user = getUser(phone);
-      if (user) return await handleOwner(user, text);
-      if (await handleContactReply(phone, text)) return;
-      if (isDoNotText(phone)) return;
-      if (INVITE_ONLY) return await sendSms(phone, `Macoma is invite-only for now. Get a link from a friend, or join the waitlist at ${PUBLIC_URL}`);
-      createUser(phone, null);
-      await sendSms(phone, TERMS_PROMPT);
-    } catch (err) {
-      console.error("inbound error", err);
-      const u = getUser(phone);
-      if (u && !u.optedOut) await sendSms(phone, "Something broke on my end. Try again in a minute.").catch(() => {});
-    }
+  if (isNew) await billing.startTrial(user);
+  startSession(res, user);
+  res.json({
+    next: isNew ? "/workspace?welcome=1" : "/workspace",
+    shareUrl: `${PUBLIC_URL}/?ref=${user.code}`,
+    referrals: await referralCount(user.code),
+    agentNumber: AGENT_NUMBER,
+    isNew,
+    connectUrl: `/connect.html?t=${connectToken(user)}`,
   });
 });
 
 // --- A2A: other agents talk to Macoma (optionally paid via x402) ---------------
 
-app.get(["/.well-known/agent-card.json", "/.well-known/agent.json"], (_req, res) => res.json(agentCard()));
+// Off unless other agents pay per call (x402) or A2A_FREE=true. Either way it runs on the
+// budget model, per caller IP limits apply, and A2A_DAILY_CAP_USD caps the day's model spend.
 const paywall = a2aPaywall();
-if (paywall) app.use(paywall);
-app.post("/a2a", a2aHandler((text, contextId) => runAgent(text, { kind: "a2a", contextId })));
+const A2A_ON = Boolean(paywall) || process.env.A2A_FREE === "true";
+const A2A_DAILY_CAP_USD = Number(process.env.A2A_DAILY_CAP_USD ?? 5);
+if (A2A_ON) {
+  app.get(["/.well-known/agent-card.json", "/.well-known/agent.json"], (_req, res) => res.json(agentCard()));
+  app.post("/a2a", async (req, res, next) => {
+    if (!(await allow(`a2a:${req.ip}`, Number(process.env.A2A_PER_IP_HOURLY ?? 30)))) return res.status(429).json({ error: "Too many requests" });
+    if ((await a2aSpentToday()) >= A2A_DAILY_CAP_USD) return res.status(503).json({ error: "Macoma isn't taking agent tasks right now. Try tomorrow." });
+    next();
+  });
+  if (paywall) app.use(paywall);
+  app.post("/a2a", a2aHandler((text, contextId) => runAgent(text, { kind: "a2a", contextId }, billing.BUDGET_MODEL)));
+}
 
 app.get("/healthz", (_req, res) => res.send("ok"));
 
-startScheduler();
-app.listen(PORT, () => {
-  console.log(`Macoma listening on ${PUBLIC_URL}`);
-  console.log(`  SMS:     ${smsEnabled ? `Twilio ${AGENT_NUMBER}` : "console (dev mode). POST /sms with From & Body to simulate"}`);
-  console.log(`  Stripe:  ${biz.stripeEnabled ? "invoices via Stripe" : "off (invoices use the owner's payment link)"}`);
-  console.log(`  A2A:     ${PUBLIC_URL}/.well-known/agent-card.json ${paywall ? `(paid, ${process.env.A2A_PRICE ?? "$0.01"})` : "(free)"}`);
-  console.log(`  x402:    ${walletAddress ? `agent wallet ${walletAddress} on ${NETWORK}` : "no agent wallet; paid calls disabled"}`);
+// For the load balancer and dashboards: database reachable, queue depth and age.
+// Gate the numbers behind OPS_TOKEN so they aren't public.
+app.get("/readyz", async (req: Request, res) => {
+  try {
+    await (await db()).query("SELECT 1");
+    const showStats = process.env.OPS_TOKEN && req.header("authorization") === `Bearer ${process.env.OPS_TOKEN}`;
+    res.json({ ok: true, ...(showStats ? { queue: await queueStats() } : {}) });
+  } catch {
+    res.status(503).json({ ok: false });
+  }
+});
+
+// Running on Grok: refuse to start half-configured. Without a price per model the cost meter,
+// and with it the margin rule, would be wrong.
+function checkProvider() {
+  if (PROVIDER !== "xai" || WAITLIST) return;
+  const missing = [
+    !process.env.XAI_API_KEY && process.env.AI_MOCK !== "1" && "XAI_API_KEY",
+    !process.env.AGENT_MODEL && "AGENT_MODEL",
+    !process.env.BUDGET_MODEL && "BUDGET_MODEL",
+  ].filter(Boolean);
+  if (missing.length) throw new Error(`AI_PROVIDER=xai needs ${missing.join(", ")} (Grok model ids exactly as xAI lists them).`);
+  for (const m of new Set([billing.DEFAULT_MODEL, billing.BUDGET_MODEL]))
+    if (!billing.hasPrice(m)) throw new Error(`Add ${m} to MODEL_PRICES_JSON (USD per million tokens: in, out, cacheRead, cacheWrite) so the cost meter is right.`);
+}
+
+async function main() {
+  checkProvider();
+  await db();
+  await importLegacyStore();
+  console.log(`Macoma (${ROLE}${WAITLIST ? ", waitlist mode" : ""}, ${PROVIDER === "xai" ? `Grok: ${billing.DEFAULT_MODEL}` : "Claude"}) on ${usingPostgres() ? "Postgres" : "embedded Postgres (dev)"}`);
+  if (ROLE !== "worker") {
+    const server = app.listen(PORT, () => {
+      console.log(`  Web:     ${PUBLIC_URL}`);
+      console.log(`  SMS:     ${smsEnabled ? `Twilio ${process.env.TWILIO_MESSAGING_SERVICE_SID ? "messaging service" : AGENT_NUMBER}` : "console (dev mode). POST /sms with From & Body to simulate"}`);
+      console.log(`  Stripe:  ${biz.stripeEnabled ? "billing + Connect invoices" : "off (no billing; invoices use the owner's payment link)"}`);
+      console.log(`  A2A:     ${PUBLIC_URL}/.well-known/agent-card.json ${paywall ? `(paid, ${process.env.A2A_PRICE ?? "$0.01"})` : A2A_ON ? "(free, capped)" : "(off: set X402_PAY_TO or A2A_FREE=true)"}`);
+      console.log(`  x402:    ${walletAddress ? `agent wallet ${walletAddress} on ${NETWORK}` : "no agent wallet; paid calls disabled"}`);
+    });
+    process.on("SIGTERM", () => server.close());
+  }
+  if (ROLE !== "web") {
+    startWorkers(jobHandlers);
+    startScheduler();
+    // Finish running jobs on deploy; anything cut off is retried after its lock expires.
+    process.on("SIGTERM", () => {
+      stopWorkers();
+      setTimeout(() => process.exit(0), 25_000).unref();
+    });
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });

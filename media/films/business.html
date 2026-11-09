@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Macoma · Business</title>
+<link rel="stylesheet" href="film.css">
+</head>
+<body data-key="C">
+<div class="stage" id="stage"></div>
+<script src="../../public/faces.js"></script>
+<script src="film.js"></script>
+<script>
+// BUSINESS: a salon owner's day. The brief, getting paid, a lead that books, the day on record.
+const D = 48.5;
+const P = { x: 1160, y: 110, s: 1.12 };
+const thread = F.thread([
+  ["day", "Today 8:00 AM", 0],
+  ["it", "Good morning, Priya ☀️\nToday:\n• 4 clients, first at 9:30\n• 2 invoices overdue ($380)\n• Gone quiet: Tom R. (bridal)\nWhat should I handle first?", 0],
+  ["me", "nudge Kim about her invoice", 11.85],
+  ["typing", 12.2, 13.0],
+  ["draft", { to: "To Kim Lee (client)", text: "Hi Kim! A friendly reminder that your $180 invoice from Bloom Studio is ready to pay here, Apple Pay works too. Thank you! – Priya" }, 13.0],
+  ["me", "YES", 15.25],
+  ["it", "Sent ✓", 15.9],
+  ["me", "and check in with Tom about the bridal package", 18.65],
+  ["typing", 19.0, 19.8],
+  ["draft", { to: "To Tom R. (lead)", text: "Hi Tom, it's Priya at Bloom. Still thinking about the bridal package? I can hold Saturday the 14th for you." }, 19.8],
+  ["me", "YES", 21.95],
+  ["it", "Sent ✓ I'll tell you when he replies.", 22.6],
+  ["day", "6:30 PM", 36.4],
+  ["me", "LOG", 37.25],
+  ["typing", 37.6, 38.3],
+  ["it", "Today:\n• 2 texts sent, both with your YES\n• 2 invoices paid ($380)\n• 1 booking: Tom, Sat the 14th\nNothing is waiting on you.", 38.3],
+]);
+
+document.getElementById("stage").innerHTML = [
+  F.fields(["#a8ecd0", "#bdb8ff", "#a8d8ff", "#ffd2b8", "#d6f5c4"], D),
+  F.kin("8:00 AM.", { t: 0.3, out: 3.3, y: 330 }),
+  F.kin("~Four ~clients. ~Two ~unpaid ~invoices. ~One ~quiet ~lead.", { t: 1.1, out: 3.3, y: 480, cls: "small", gap: 0.07 }),
+
+  F.phone({
+    time: "8:00",
+    kf: [[3.1, { x: 755, y: 1300, s: 1.12 }], [4.2, { x: 755, y: 110, s: 1.12 }], [4.6, { x: 755, y: 110, s: 1.12 }], [5.4, { ...P, ry: -10 }],
+         [29.4, { ...P, ry: -10 }], [30.2, { ...P, y: 1300, ry: -10 }], [35.4, { ...P, y: 1300, ry: -10 }], [36.2, { ...P, ry: -10 }], [41.4, { ...P, ry: -10 }], [42.2, { ...P, y: 1300, ry: -10 }]],
+    content:
+      F.header("Macoma", "fol") + thread +
+      F.inbar([[10.2, 11.8, "nudge Kim about her invoice"], [14.6, 15.2, "YES"], [16.6, 18.6, "and check in with Tom about the bridal package"], [21.3, 21.9, "YES"], [36.7, 37.2, "LOG"]]) +
+      F.lock({ date: "Wednesday, October 28", clock: "8:00", out: 9.6, wall: "linear-gradient(160deg,#7fd6b4,#8f8cf0 55%,#7cc0f7)" }) +
+      F.notif({ title: "Macoma", msg: "Good morning, Priya. 4 clients today · $380 overdue · Tom's gone quiet", t: 4.8, out: 9.2, y: 300 }) +
+      F.lock({ date: "Wednesday, October 28", clock: "2:14", t: 23.4, out: 29.6, wall: "linear-gradient(160deg,#7fd6b4,#8f8cf0 55%,#7cc0f7)" }) +
+      F.notif({ title: "Macoma", msg: "💬 Tom R. replied: \"Yes! Let's book Saturday 🎉\"", t: 24.1, out: 29.4, y: 300 }) +
+      F.notif({ title: "Macoma", msg: "💸 Kim Lee paid $180.00", t: 25.3, out: 29.4, y: 404 }) +
+      F.notif({ title: "Macoma", msg: "💸 Ana P. paid $200.00", t: 26.5, out: 29.4, y: 486 }),
+  }),
+
+  F.cap({ tag: "Morning brief", h: "Your whole day<br>in one text.", p: "Clients from your calendar, money from Stripe, and the leads that went quiet.", x: 230, y: 330, t: 5.2, out: 9.8 }),
+  F.cap({ tag: "Get paid", h: "Chase invoices<br>without the awkward.", p: "Friendly reminders, written for you. Sent when you say YES.", x: 230, y: 330, t: 10.2, out: 16.2 }),
+  F.cap({ tag: "Follow-ups", h: "Leads don't<br>go cold.", p: "Macoma notices who went quiet and drafts the check-in.", x: 230, y: 330, t: 16.5, out: 23.0 }),
+  F.cap({ tag: "Afternoon", h: "Money in.<br>Bookings in.", p: "Replies and payments arrive as texts, wherever you are.", x: 230, y: 330, t: 23.6, out: 29.4 }),
+
+  F.kin("Works with the tools that run your business.", { t: 30.2, out: 35.4, y: 70, cls: "small", gap: 0.06 }),
+  F.hub({
+    t: 30.6, out: 35.4, cy: 660, rx: 660, ry: 290, start: -90,
+    tiles: [
+      { name: "Google Calendar", note: "Appointments", color: "#4285f4", letter: "C" },
+      { name: "Stripe", note: "Invoices with Apple Pay", color: "#635bff", letter: "S" },
+      { name: "Square", note: "Your POS account", color: "#3e4348", icon: '<span style="width:46px;height:46px;border:8px solid #fff;border-radius:11px;display:block"></span>' },
+      { name: "QuickBooks", note: "Books stay current", color: "#2ca01c", letter: "qb" },
+      { name: "Gmail", note: "Booking requests", color: "#d93025", letter: "M" },
+      { name: "Outlook", note: "Work calendar", color: "#0078d4", letter: "O" },
+      { name: "Other AI agents", note: "Hand off tasks", color: "#5e5ce6", letter: "A" },
+    ],
+  }),
+
+  F.cap({ tag: "On the record", h: "See everything<br>it did.", p: "Text LOG anytime. Every action, and every YES, in one place.", x: 230, y: 330, t: 36.2, out: 41.6 }),
+  F.kin("Run the business.\n~Not the busywork.", { t: 42.2, out: 44.6, y: 400 }),
+  F.end({ t: 44.8, tagline: "The office manager you text." }),
+].join("");
+FilmStart(D);
+</script>
+</body>
+</html>

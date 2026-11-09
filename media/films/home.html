@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Macoma · Home</title>
+<link rel="stylesheet" href="film.css">
+</head>
+<body data-key="F">
+<div class="stage" id="stage"></div>
+<script src="../../public/faces.js"></script>
+<script src="film.js"></script>
+<script>
+// HOME: a parent's day. Morning brief, a plan that moves, a reminder on repeat.
+const D = 40;
+const P = { x: 1160, y: 110 }; // phone, beside the captions
+const thread = F.thread([
+  ["day", "Today 6:45 AM", 0],
+  ["it", "Good morning, Ana ☀️\nToday:\n• Mia's dentist, 3:30\n• Jess (sitter) at 6:00\n• Trash night", 0],
+  ["me", "Dentist moved Mia to Thu 4pm. Fix the calendar and tell Jess?", 12.45],
+  ["typing", 12.9, 14.0],
+  ["it", "Moved to Thursday 4:00 PM on your calendar. Here's the text for Jess:", 14.0],
+  ["draft", { to: "To Jess (sitter)", text: "Hi Jess! Mia's dentist moved to Thursday at 4, so no pickup today. Thank you! – Ana" }, 14.8],
+  ["me", "YES", 17.25],
+  ["meta", "Delivered", 17.6],
+  ["it", "Sent to Jess ✓", 18.1],
+  ["me", "remind me to order dog food every 3 weeks", 21.05],
+  ["typing", 21.4, 22.3],
+  ["it", "Done. Every third Monday at 9 AM, so Bruno never runs out 🐶", 22.3],
+  ["it", "💬 Jess replied: \"Got it, thanks!\"", 24.4],
+]);
+document.getElementById("stage").innerHTML = [
+  F.fields(["#ffc9a8", "#d9c8ff", "#ffe08a", "#a9d8ff", "#ffd1e3"], D),
+  F.kin("6:47 AM.", { t: 0.3, out: 3.2, y: 330 }),
+  F.kin("~Lunches. ~Carpool. ~The ~dentist.", { t: 1.1, out: 3.2, y: 480, cls: "small" }),
+
+  F.phone({
+    time: "6:47",
+    kf: [[3.1, { x: 755, y: 1300, s: 1.12 }], [4.2, { x: 755, y: 110, s: 1.12 }], [5.0, { x: 755, y: 110, s: 1.12 }], [5.9, { x: P.x, y: P.y, ry: -10, s: 1.12 }], [26.4, { x: P.x, y: P.y, ry: -10, s: 1.12 }], [27.3, { x: P.x, y: 1300, ry: -10, s: 1.12 }]],
+    content:
+      F.header() + thread +
+      F.inbar([[10.3, 12.4, "Dentist moved Mia to Thu 4pm. Fix the calendar and tell Jess?"], [16.4, 17.2, "YES"], [19.0, 21.0, "remind me to order dog food every 3 weeks"]]) +
+      F.lock({ date: "Tuesday, October 27", clock: "6:47", out: 10, wall: "linear-gradient(160deg,#f6a88a,#c79cf2 55%,#7fb2f5)" }) +
+      F.notif({ title: "Macoma", when: "now", msg: "Good morning, Ana ☀️ Mia's dentist 3:30 · Sitter at 6 · Trash night", t: 4.8, out: 9.6, y: 300 }),
+  }),
+
+  F.cap({ tag: "Morning brief", h: "Your day,<br>before you ask.", p: "Sent at 6:45 from your calendar. No app to open.", x: 230, y: 330, t: 5.6, out: 10.2 }),
+  F.cap({ tag: "Calendar", h: "Plans change.<br>Fixed in one text.", p: "Macoma moves the appointment and writes the message for you.", x: 230, y: 330, t: 10.6, out: 15.6 }),
+  F.cap({ tag: "You approve", h: "Nothing sends<br>until you say YES.", p: "Every text to another person waits for your OK.", x: 230, y: 330, t: 15.9, out: 20.6 }),
+  F.cap({ tag: "Reminders", h: "The small stuff,<br>on repeat.", p: "Reorders, renewals, trash night. Remembered.", x: 230, y: 330, t: 21.0, out: 26.2 }),
+
+  F.kin("Connects to the apps you already live in.", { t: 27.2, out: 33.2, y: 70, cls: "small", gap: 0.06 }),
+  F.hub({
+    t: 27.6, out: 33.2, cy: 600, rx: 600, ry: 290, start: -150,
+    tiles: [
+      { name: "Google Calendar", note: "Plans & pickups", color: "#4285f4", letter: "C" },
+      { name: "Gmail", note: "Receipts & bookings", color: "#d93025", letter: "M" },
+      { name: "Outlook", note: "Work calendar", color: "#0078d4", letter: "O" },
+      { name: "Other AI agents", note: "Research & compare", color: "#5e5ce6", letter: "A" },
+      { name: "Web services", note: "Small tasks, in budget", color: "#ff9f0a", letter: "$" },
+    ],
+  }),
+
+  F.kin("Less to remember.\n~More to live.", { t: 33.5, out: 36.0, y: 400 }),
+  F.end({ t: 36.2, tagline: "Life admin, handled by text." }),
+].join("");
+FilmStart(D);
+</script>
+</body>
+</html>
